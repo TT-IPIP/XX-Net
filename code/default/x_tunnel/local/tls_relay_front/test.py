@@ -3,12 +3,11 @@
 
 import os
 import sys
+import time
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 front_path = os.path.abspath( os.path.join(current_path, os.pardir))
 root_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
-module_data_path = os.path.join(data_path, 'x_tunnel')
 python_path = root_path
 
 sys.path.append(root_path)
@@ -32,6 +31,10 @@ elif sys.platform == "darwin":
 import tls_relay_front as tls_relay
 from xlog import getLogger
 xlog = getLogger("tls_relay")
+import env_info
+
+data_path = env_info.data_path
+module_data_path = os.path.join(data_path, 'x_tunnel')
 
 
 def t1():
@@ -41,9 +44,21 @@ def t1():
     tls_relay.front.stop()
 
 
+def get_dns():
+    start_time = time.time()
+    # content, status, response = front.request("GET", "scan1.xx-net.org", "/", timeout=10)
+    content, status, response = tls_relay.front.request("GET", "dns.xx-net.org", path="/query?domain=www.google.com")
+
+    time_cost = time.time() - start_time
+    xlog.info("GET cost:%f", time_cost)
+    xlog.info("status:%d content:%s", status, content)
+    tls_relay.front.stop()
+
+
 if __name__ == '__main__':
     try:
-        t1()
+        # t1()
+        get_dns()
     except KeyboardInterrupt:
         import sys
 

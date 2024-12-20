@@ -13,17 +13,22 @@ current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir))
 top_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir))
 code_path = os.path.abspath(os.path.join(root_path, os.pardir))
-data_root = os.path.join(top_path, 'data')
+import env_info
+data_root = env_info.data_path
 python_path = root_path
 noarch_lib = os.path.join(python_path, 'lib', 'noarch')
 sys.path.append(noarch_lib)
 
 import utils
 import simple_http_client
+import global_var
 from xlog import getLogger
-xlog = getLogger("launcher")
-from config import config
 
+xlog = getLogger("launcher")
+try:
+    from config import config
+except:
+    from .config import config
 
 if not os.path.isdir(data_root):
     os.mkdir(data_root)
@@ -67,7 +72,7 @@ def request(url, retry=0, timeout=30):
         client = simple_http_client.Client(proxy={
             "type": "http",
             "host": "127.0.0.1",
-            "port": 8087,
+            "port": 8086,
             "user": None,
             "pass": None
         }, timeout=timeout, cert=cert)
@@ -103,7 +108,7 @@ def download_file(url, filename):
 
                 downloaded = 0
                 with open(filename, 'wb') as fp:
-                    while True:
+                    while global_var.running:
                         time_left = timeout - (time.time() - start_time)
                         if time_left < 0:
                             raise Exception("time out")
@@ -124,7 +129,7 @@ def download_file(url, filename):
                 left = file_size
                 downloaded = 0
                 with open(filename, 'wb') as fp:
-                    while True:
+                    while global_var.running:
                         chunk_len = min(65536, left)
                         if not chunk_len:
                             break
@@ -144,7 +149,7 @@ def download_file(url, filename):
                 progress[url]["status"] = "finished"
                 return True
         except Exception as e:
-            xlog.warn("download %s to %s fail:%r", url, filename, e)
+            xlog.exception("download %s to %s fail:%r", url, filename, e)
             continue
 
     progress[url]["status"] = "failed"
@@ -189,7 +194,7 @@ def current_version():
 
 
 def get_github_versions():
-    readme_url = "https://raw.githubusercontent.com/XX-net/XX-Net/master/code/default/update_v4.txt"
+    readme_url = "https://raw.githubusercontent.com/XX-net/XX-Net/master/code/default/update_v5.txt"
     readme_target = os.path.join(download_path, "version.txt")
 
     if not download_file(readme_url, readme_target):
@@ -247,11 +252,15 @@ def overwrite(xxnet_version, xxnet_unzip_path):
             for filename in files:
                 src_file = os.path.join(root, filename)
                 dst_file = os.path.join(top_path, target_relate_path, filename)
+                if relate_path == 'code' and filename == 'app_info.json':
+                    continue
+
                 if not os.path.isfile(dst_file) or hash_file_sum(src_file) != hash_file_sum(dst_file):
                     xlog.info("copy %s => %s", src_file, dst_file)
                     # modify by outofmemo, files in '/sdcard' are not allowed to chmod for Android
                     # and shutil.copy() will call shutil.copymode()
-                    if sys.platform != 'win32' and os.path.isfile("/system/bin/dalvikvm") == False and os.path.isfile("/system/bin/dalvikvm64") == False and os.path.isfile(dst_file):
+                    if sys.platform != 'win32' and os.path.isfile("/system/bin/dalvikvm") == False and os.path.isfile(
+                            "/system/bin/dalvikvm64") == False and os.path.isfile(dst_file):
                         st = os.stat(dst_file)
                         shutil.copy(src_file, dst_file)
                         if st.st_mode & stat.S_IEXEC:
@@ -409,7 +418,7 @@ def start_update_version(version, checkhash=1):
         return progress["update_status"]
 
     progress["update_status"] = "Start update"
-    th = threading.Thread(target=update_version, args=(version, checkhash))
+    th = threading.Thread(target=update_version, args=(version, checkhash), name="update_version")
     th.start()
     return True
 

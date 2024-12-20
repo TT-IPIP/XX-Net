@@ -487,6 +487,7 @@ bignews.org
 bigsound.org
 biliworld.com
 billypan.com
+bing.com
 binux.me
 bipic.net
 bit.do
@@ -750,6 +751,7 @@ cftfc.com
 cgdepot.org
 cgst.edu
 ch.shvoong.com
+challenges.cloudflare.com
 change.org
 changeip.name
 changeip.net
@@ -1753,6 +1755,13 @@ gigporno.ru
 girlbanker.com
 gist.github.com
 git.io
+github.com
+github.io
+githubusercontent.com
+githubassets.com
+githubapp.com
+github.community
+ghcr.io
 gizlen.net
 gjczz.com
 glass8.eu
@@ -1829,6 +1838,7 @@ google.ca
 google.calstate.edu
 google.cd
 google.ci
+google.cn
 google.co.id
 google.co.jp
 google.co.kr
@@ -1898,6 +1908,7 @@ googleplus.com
 googlescholar.com
 googlesile.com
 googlesource.com
+googlesyndication.com
 googletagservices.com
 googleusercontent.com
 googlevideo.com
@@ -3260,6 +3271,7 @@ opedialogue.org
 open.com.hk
 open.demonii.si
 openallweb.com
+openai.com
 opendemocracy.net
 opendn.xyz
 openervpn.in
@@ -3422,6 +3434,7 @@ piraattilahti.org
 piring.com
 pixelqi.com
 pixiv.net
+pixiv.org
 pixnet.net
 pk.com
 placemix.com
@@ -3541,6 +3554,7 @@ putlocker.com
 putty.org
 puuko.com
 pwned.com
+pximg.net
 python.com
 python.com.tw
 pythonhackers.com

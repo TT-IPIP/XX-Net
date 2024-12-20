@@ -7,8 +7,6 @@ import threading
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 default_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(default_path, os.pardir, os.pardir, 'data'))
-module_data_path = os.path.join(data_path, 'gae_proxy')
 
 if __name__ == "__main__":
     sys.path.append(default_path)
@@ -28,9 +26,14 @@ if __name__ == "__main__":
         extra_lib = "/System/Library/Frameworks/Python.framework/Versions/2.7/Extras/lib/python"
         sys.path.append(extra_lib)
 
-import xlog
 
+import env_info
+
+module_data_path = os.path.join(env_info.data_path, 'gae_proxy')
+import xlog
 logger = xlog.getLogger("gae_proxy")
+
+from xx_six import ConnectionError, ConnectionResetError, BrokenPipeError
 
 from front_base.openssl_wrap import SSLContext
 from front_base.connect_creator import ConnectCreator
@@ -42,26 +45,33 @@ from gae_proxy.local.host_manager import HostManager
 
 class CheckIp(front_base.check_ip.CheckIp):
     def check_response(self, response):
-        server_type = response.headers.get('Server', "")
+        server_type = response.headers.get(b'Server', b"")
+        if isinstance(server_type, list):
+            server_type = server_type[0]
         self.logger.debug("status:%d", response.status)
         self.logger.debug("Server type:%s", server_type)
 
         if response.status not in self.config.check_ip_accept_status:
             return False
 
-        if response.status == 503:
+        if response.status in [503, 500]:
             # out of quota
             if b"gws" not in server_type and b"Google Frontend" not in server_type and b"GFE" not in server_type:
-                xlog.warn("503 but server type:%s", server_type)
+                xlog.warn("%d but server type:%s", response.status, server_type)
                 return False
             else:
                 return True
 
         try:
             content = response.read()
-        except ConnectionResetError:
-            return False
         except Exception as e:
+            if sys.version_info[0] == 3 and (
+                    isinstance(e, ConnectionError) or
+                    isinstance(e, ConnectionResetError) or
+                    isinstance(e, BrokenPipeError)
+            ):
+                return False
+
             self.logger.warn("app check except:%r", e)
             return False
 
@@ -135,7 +145,7 @@ class CheckAllIp(object):
 
     def run(self):
         for i in range(0, 100):
-            threading.Thread(target=self.checker).start()
+            threading.Thread(target=self.checker, name="gae_ip_checker").start()
 
 
 def check_all():
@@ -156,7 +166,7 @@ if __name__ == "__main__":
     else:
         ip = "142.250.66.180"
 
-    print(("test ip:%s" % ip))
+    xlog.info(("test ip:%s" % ip))
 
     if len(sys.argv) > 2:
         top_domain = sys.argv[2]
@@ -182,8 +192,8 @@ if __name__ == "__main__":
 
     res = check_ip.check_ip(ip, host=top_domain, wait_time=wait_time)
     if not res:
-        print("connect fail")
+        xlog.info("connect fail")
     elif res.ok:
-        print(("success, domain:%s handshake:%d" % (res.host, res.handshake_time)))
+        xlog.info(("success, domain:%s handshake:%d" % (res.host, res.handshake_time)))
     else:
-        print("not support")
+        xlog.info("not support")

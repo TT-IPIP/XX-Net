@@ -1,8 +1,13 @@
 import time
 import socket
 import struct
-import urllib.parse
-import select
+import json
+
+try:
+    from urllib.parse import urlparse
+    from urllib.parse import parse_qs
+except ImportError:
+    from urlparse import urlparse
 
 from . import pac_server
 from . import global_var as g
@@ -41,12 +46,12 @@ class ProxyServer():
         try:
             dst_port, srv_ip = struct.unpack("!2xH4s8x", dst)
             ip_str = socket.inet_ntoa(srv_ip)
-            if dst_port != g.config.proxy_port and not utils.is_private_ip(ip_str):
-                xlog.debug("Redirect to:%s:%d from:%s", ip_str, dst_port, self.client_address)
-                handle_ip_proxy(self.conn, ip_str, dst_port, self.client_address)
-                return True
-            else:
+
+            if dst_port == g.config.proxy_port and utils.to_bytes(ip_str) in g.local_ips:
                 return False
+
+            xlog.debug("Redirect to:%s:%d from:%s", ip_str, dst_port, self.client_address)
+            handle_ip_proxy(self.conn, ip_str, dst_port, self.client_address)
         except Exception as e:
             xlog.exception("redirect except:%r", e)
 
@@ -55,12 +60,11 @@ class ProxyServer():
     def handle(self):
         self.__class__.handle_num += 1
 
-        if self.try_redirect():
-            return
+        if not self.try_redirect():
+            self.handle_request()
 
-        sockets = [self.conn]
+    def handle_request(self):
         try:
-            r, w, e = select.select(sockets, [], [])
             socks_version = self.conn.recv(1, socket.MSG_PEEK)
             if not socks_version:
                 return
@@ -79,8 +83,10 @@ class ProxyServer():
 
         except socket.error as e:
             xlog.warn('socks handler read error:%r', e)
+            self.conn.close()
         except Exception as e:
             xlog.exception("any err:%r", e)
+            self.conn.close()
 
     def read_null_end_line(self):
         sock = self.conn
@@ -224,7 +230,19 @@ class ProxyServer():
         sock.send(reply)
 
         # xlog.debug("Socks4:%r to %s:%d", self.client_address, addr, port)
-        handle_ip_proxy(sock, addr, port, self.client_address)
+        if domain_mode:
+            handle_domain_proxy(sock, addr, port, self.client_address)
+        else:
+            handle_ip_proxy(sock, addr, port, self.client_address)
+
+    def handle_udp_associate(self, sock, addr, port, addrtype_pack, addr_pack):
+        udp_relay_port = g.dns_srv.udp_relay_port
+        xlog.debug("socks5 from:%r udp associate to %s:%d use udp_relay_port:%d", self.client_address, addr, port, udp_relay_port)
+        reply = b"\x05\x00\x00" + addrtype_pack + addr_pack + struct.pack(">H", udp_relay_port)
+        sock.send(reply)
+
+        self.rfile.read(1)
+        xlog.debug("socks5 from:%r udp associate to %s:%d closed", self.client_address, addr, port)
 
     def socks5_handler(self):
         sock = self.conn
@@ -246,11 +264,6 @@ class ProxyServer():
             return
 
         command = ord(data[1:2])
-        if command != 1:  # 1. Tcp connect
-            xlog.warn("request not supported command mode:%d", command)
-            sock.send(b"\x05\x07\x00\x01")  # Command not supported
-            return
-
         addrtype_pack = data[3:4]
         addrtype = ord(addrtype_pack)
         if addrtype == 1:  # IPv4
@@ -269,8 +282,15 @@ class ProxyServer():
             xlog.warn("request address type unknown:%d", addrtype)
             sock.send(b"\x05\x07\x00\x01")  # Command not supported
             return
-
         port = struct.unpack('>H', self.rfile.read(2))[0]
+
+        if command == 3:  # 3. UDP associate
+            return self.handle_udp_associate(sock, addr, port, addrtype_pack, addr_pack)
+
+        if command != 1:  # 1. Tcp connect
+            xlog.warn("request not supported command mode:%d", command)
+            sock.send(b"\x05\x07\x00\x01")  # Command not supported
+            return
 
         # xlog.debug("socks5 %r connect to %s:%d", self.client_address, addr, port)
         reply = b"\x05\x00\x00" + addrtype_pack + addr_pack + struct.pack(">H", port)
@@ -325,7 +345,7 @@ class ProxyServer():
             return
 
         if url.lower().startswith(b"http://"):
-            o = urllib.parse.urlparse(url)
+            o = urlparse(url)
             host, port = netloc_to_host_port(o.netloc)
 
             url_prex_len = url[7:].find(b"/")
@@ -336,13 +356,53 @@ class ProxyServer():
                 url_prex_len = len(url)
                 path = b"/"
         else:
-            # not proxy request, should be PAC
-            xlog.debug("PAC %s %s from:%s", method, url, self.client_address)
-            handler = pac_server.PacHandler(self.conn, self.client_address, None, xlog)
-            return handler.handle()
+            # not proxy request
+            parsed_url = urlparse(utils.to_str(url))
+            kv = parse_qs(parsed_url.query)
+            if parsed_url.path == "/dns-query":
+                return self.DoH_handler(kv)
+            else:
+                xlog.debug("PAC %s %s from:%s", method, url, self.client_address)
+                handler = pac_server.PacHandler(self.conn, self.client_address, None, xlog)
+                return handler.handle()
 
         sock = SocketWrap(self.conn, self.client_address[0], self.client_address[1])
-        sock.replace_pattern = [url[:url_prex_len], ""]
+        sock.replace_pattern = [url[:url_prex_len], b""]
 
         xlog.debug("http %r connect to %s:%d %s %s", self.client_address, host, port, method, path)
         handle_domain_proxy(sock, host, port, self.client_address)
+
+    def DoH_handler(self, kv):
+        handler = pac_server.PacHandler(self.conn, self.client_address, None, xlog)
+        name = kv.get("name", [None])[0]
+        if not name:
+            xlog.warn("DoH request no name")
+            return handler.send_response(content=b'{"error":"no name"}', status=400)
+
+        dns_type = kv.get("type", ["1"])[0]
+        if dns_type.isnumeric():
+            dns_type = int(dns_type)
+
+        ips = utils.to_str(g.dns_query.query(name, dns_type))
+        info = {
+            "Status": 0,
+            "Answer": [
+            ]
+        }
+        for ip in ips:
+            if dns_type == 1 and not utils.check_ip_valid4(ip):
+                continue
+            if dns_type == 16 and not utils.check_ip_valid6(ip):
+                continue
+
+            info["Answer"].append({
+                "name": name,
+                "type": dns_type,
+                "data": ip
+            })
+        res = json.dumps(info)
+        headers = {
+            "Content-Type": "application/dns-json",
+            "Access-Control-Allow-Origin": "*"
+        }
+        return handler.send_response(content=res, headers=headers, status=200)

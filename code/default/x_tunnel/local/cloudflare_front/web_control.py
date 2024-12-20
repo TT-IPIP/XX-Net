@@ -4,7 +4,11 @@
 
 import os
 import time
-import urllib.parse
+
+try:
+    from urllib.parse import urlparse, parse_qs
+except ImportError:
+    from urlparse import urlparse, parse_qs
 
 import simple_http_server
 from .front import front
@@ -26,7 +30,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.wfile = wfile
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        path = urlparse(self.path).path
         if path == "/log":
             return self.req_log_handler()
         elif path == "/ip_list":
@@ -40,19 +44,19 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         front.logger.info('%s "%s %s HTTP/1.1" 404 -', self.address_string(), self.command, self.path)
 
     def req_log_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = self.unpack_reqs(parse_qs(req, keep_blank_values=True))
         data = ''
 
         cmd = "get_last"
         if reqs["cmd"]:
-            cmd = reqs["cmd"][0]
+            cmd = reqs["cmd"]
 
         if cmd == "get_last":
-            max_line = int(reqs["max_line"][0])
+            max_line = int(reqs["max_line"])
             data = front.logger.get_last_lines(max_line)
         elif cmd == "get_new":
-            last_no = int(reqs["last_no"][0])
+            last_no = int(reqs["last_no"])
             data = front.logger.get_new_lines(last_no)
         else:
             front.logger.error('PAC %s %s %s ', self.address_string(), self.command, self.path)
@@ -121,6 +125,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc(mimetype, data)
 
     def req_debug_handler(self):
+        if not front.running:
+            return self.send_response_nc('text/plain', "Not running")
+
         data = ""
         objs = [front.connect_manager] + list(front.dispatchs.values())
         for obj in objs:
@@ -132,7 +139,14 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 sub_obj = getattr(obj, attr)
                 if callable(sub_obj):
                     continue
-                data += "    %s = %s\r\n" % (attr, sub_obj)
+
+                if isinstance(sub_obj, list):
+                    data += "    %s:\r\n" % (attr)
+                    for item in sub_obj:
+                        data += "      %s\r\n" % item
+                    data += "\r\n"
+                else:
+                    data += "    %s = %s\r\n" % (attr, sub_obj)
             if hasattr(obj, "to_string"):
                 data += obj.to_string()
 

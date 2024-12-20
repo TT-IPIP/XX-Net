@@ -16,48 +16,56 @@
 
     <div class="row-fluid">
         <div class="span4">
-            <label for="pac-policy">{{ _( "PAC Policy" ) }}</label>
+            <label for="pac-policy">{{ _( "Route Policy" ) }}</label>
         </div>
         <div class="span4">
             <select id="pac-policy">
-                <option value="black_GAE">{{ _("Black->GAEProxy" ) }}</option>
-                <option value="black_X-Tunnel">{{ _("Black->X-Tunnel" ) }}</option>
+<!--                <option value="black_X-Tunnel">{{ _("Black->X-Tunnel" ) }}</option>-->
                 <option value="smart-router">{{ _("All Smart-Router" ) }}</option>
+                <option value="all_X-Tunnel">{{ _("All->X-Tunnel" ) }}</option>
+                <option value="all_Direct">{{ _("All->Direct" ) }}</option>
             </select>
         </div>
     </div>
 
     <div class="row-fluid">
-        <div class="span4">{{ _( "Auto-Try Direct" ) }}</div> <!-- .span4 -->
-        <div class="span8">
+        <div class="config_label">{{ _( "Auto-Try Direct" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
             <input id="auto-direct" type="checkbox" data-toggle="switch"/>
         </div> <!-- .span8 -->
     </div> <!-- .row-fluid -->
 
     <div class="row-fluid">
-        <div class="span4">{{ _( "Use IPv6 preferentially when Auto-Try Direct" ) }}</div> <!-- .span4 -->
-        <div class="span8">
+        <div class="config_label">{{ _( "Use IPv6 preferentially when Auto-Try Direct" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
             <input id="auto-direct6" type="checkbox" data-toggle="switch"/>
         </div> <!-- .span8 -->
     </div> <!-- .row-fluid -->
 
-    <div class="row-fluid">
-        <div class="span4">{{ _( "Auto-Try GAEProxy" ) }}</div> <!-- .span4 -->
-        <div class="span8">
+    <div class="row-fluid" id="auto_try_gae_proxy_div" hidden>
+        <div class="config_label">{{ _( "Auto-Try GAEProxy" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
             <input id="auto-gae" type="checkbox" data-toggle="switch"/>
         </div> <!-- .span8 -->
     </div> <!-- .row-fluid -->
 
-    <div class="row-fluid">
-        <div class="span4">{{ _( "Enable Fake CA" ) }}</div> <!-- .span4 -->
-        <div class="span8">
+    <div class="row-fluid" id="enable_fake_ca_div" hidden>
+        <div class="config_label">{{ _( "Enable Fake CA" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
             <input id="enable_fake_ca" type="checkbox" data-toggle="switch"/>
         </div> <!-- .span8 -->
     </div> <!-- .row-fluid -->
 
     <div class="row-fluid">
-        <div class="span4">{{ _( "Block Advertisement" ) }}</div> <!-- .span4 -->
-        <div class="span8">
+        <div class="config_label">{{ _( "Bypass Speed Test Sites" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
+            <input id="bypass_speedtest" type="checkbox" data-toggle="switch"/>
+        </div> <!-- .span8 -->
+    </div> <!-- .row-fluid -->
+
+    <div class="row-fluid">
+        <div class="config_label">{{ _( "Block Advertisement" ) }}</div> <!-- .span4 -->
+        <div class="config_switch">
             <input id="block_advertisement" type="checkbox" data-toggle="switch"/>
         </div> <!-- .span8 -->
     </div> <!-- .row-fluid -->
@@ -70,6 +78,15 @@
     });
 </script>
 <script type="text/javascript">
+    if (gae_enabled){
+        var new_option = document.getElementById("pac-policy").appendChild(document.createElement("option"));
+        new_option.value = "{{ _("Black->GAEProxy" ) }}";
+        new_option.text = "black_GAE";
+
+        $("#auto_try_gae_proxy_div").show();
+        $("#enable_fake_ca_div").show();
+    }
+
     function getSmartRouterConfig() {
         $.ajax({
             type: 'POST',
@@ -99,6 +116,12 @@
                     $("#enable_fake_ca").parent().addClass('switch-on');
 
                     $("#enable_fake_ca").prop('checked', true);
+                }
+                if (result['bypass_speedtest'] != 0) {
+                    $("#bypass_speedtest").parent().removeClass('switch-off');
+                    $("#bypass_speedtest").parent().addClass('switch-on');
+
+                    $("#bypass_speedtest").prop('checked', true);
                 }
                 if (result['block_advertisement'] != 0) {
                     $("#block_advertisement").parent().removeClass('switch-off');
@@ -164,6 +187,10 @@
 
     $('#enable_fake_ca').change(function () {
         setSmartRouterConfig("enable_fake_ca", $(this).is(':checked') ? 1 : 0);
+    });
+
+    $('#bypass_speedtest').change(function () {
+        setSmartRouterConfig("bypass_speedtest", $(this).is(':checked') ? 1 : 0);
     });
 
     $('#block_advertisement').change(function () {

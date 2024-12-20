@@ -16,6 +16,8 @@ the stream by the endpoint that initiated the stream.
 
 
 import threading
+import time
+
 from hyper.common.headers import HTTPHeaderMap
 from hyper.packages.hyperframe.frame import (
     FRAME_MAX_LEN, FRAMES, HeadersFrame, DataFrame, PushPromiseFrame,
@@ -28,7 +30,7 @@ from hyper.common.util import to_host_port_tuple, to_native_string, to_bytestrin
 import simple_http_client
 
 from .http_common import *
-
+from utils import to_bytes
 
 # Define a set of states for a HTTP/2 stream.
 STATE_IDLE               = 0
@@ -70,6 +72,8 @@ class Stream(object):
         self.task = task
         self.state = STATE_IDLE
         self.get_head_time = None
+        self.start_connection_point = self.connection._sock.bytes_received
+        self.get_head_stream_num = 0
 
         # There are two flow control windows: one for data we're sending,
         # one for data being sent to us.
@@ -172,6 +176,7 @@ class Stream(object):
         """
         Adds a single HTTP header to the headers to be sent on the request.
         """
+        value = to_bytes(value)
         if not replace:
             self.request_headers[name] = value
         else:
@@ -266,9 +271,6 @@ class Stream(object):
             pass
 
         if b'END_HEADERS' in frame.flags:
-            if self.config.http2_show_debug:
-                self.logger.debug("END_HEADERS")
-
             if self.response_headers is not None:
                 raise ProtocolError("Too many header blocks.")
 
@@ -291,6 +293,7 @@ class Stream(object):
             self.response_header_datas = None
 
             self.get_head_time = time.time()
+            self.get_head_stream_num = len(self.connection.streams)
 
             length = self.response_headers.get("Content-Length", None)
             if isinstance(length, list):
@@ -301,16 +304,50 @@ class Stream(object):
                 self.send_response()
 
         if b'END_STREAM' in frame.flags:
-            if self.config.http2_show_debug:
-                self.logger.debug("%s Closing remote side of stream:%d", self.connection.ssl_sock.ip_str, self.stream_id)
+
+            xcost = self.response_headers.get("X-Cost", -1)
+            if isinstance(xcost, list):
+                xcost = float(xcost[0])
 
             time_now = time.time()
-            time_cost = time_now - self.get_head_time
-            if time_cost > 0 and \
-                    isinstance(self.task.content_length, int) and \
-                    not self.task.finished:
-                speed = self.task.content_length / time_cost
+            whole_cost = time_now - self.start_time
+            rtt = whole_cost - xcost
+            receive_cost = time_now - self.get_head_time
+            bytes_received = self.connection._sock.bytes_received - self.start_connection_point
+            if self.config.http2_show_debug:
+                self.logger.debug("%s stream:%d END_STREAM %s%s", self.connection.ssl_sock.ip_str,
+                                  self.stream_id, self.task.host, self.task.path)
+
+            if b"ping" in self.task.path and self.config.http2_show_debug:
+                self.logger.debug("got pong for %s", self.connection.ip_str)
+
+            if rtt > 0 and bytes_received >= 10000 and not self.task.finished and xcost >= 0.0:
+                t_road = rtt
+                if t_road <= self.connection.handshake:
+                    # adjust handshake
+                    self.connection.handshake = t_road
+                else:
+                    t_road -= self.connection.handshake
+
+                speed = (len(self.request_body) + bytes_received) / t_road
+                self.connection.update_speed(speed)
                 self.task.set_state("h2_finish[SP:%d]" % speed)
+
+                send_cost = len(self.request_body) / speed
+                streams_cost = ((self.connection.max_payload /2) * self.get_head_stream_num) / speed
+
+                if self.config.http2_show_debug:
+                    self.logger.debug("%s RTT:%f rtt:%f send_len:%d recv_len:%d "
+                                      "whole_Cost:%f xcost:%f send_cost:%f recv_cost:%f "
+                                      "streams_cost:%f Speed: %f",
+                                      self.connection.ssl_sock.ip_str,
+                                      self.connection.rtt * 1000, rtt * 1000,
+                                      len(self.request_body), bytes_received,
+                                      whole_cost, xcost, send_cost, receive_cost, streams_cost, speed)
+                self.connection.update_rtt(rtt, self.task.predict_rtt)
+                self.logger.debug("%s handshake:%f stream:%d up:%d down:%d rtt:%f", self.connection.ip_str,
+                                  self.connection.handshake,
+                                  len(self.connection.streams), len(self.request_body), bytes_received, rtt)
 
             self._close_remote()
 
@@ -331,21 +368,31 @@ class Stream(object):
         response.ssl_sock = self.connection.ssl_sock
         response.worker = self.connection
         response.task = self.task
-        if self.config.http2_show_debug:
-            self.logger.debug("self.task.queue.put(response)")
 
-        self.task.queue.put(response)
+        if self.task.queue:
+            self.task.queue.put(response)
+        else:
+            if self.config.http2_show_debug:
+                self.logger.debug("got pong for %s status:%d", self.connection.ip_str, status)
+
         if status in self.config.http2_status_to_close:
             self.connection.close("status %d" % status)
 
     def close(self, reason="close"):
         if not self.task.responsed:
-            self.connection.retry_task_cb(self.task, reason)
+            # self.task.set_state("stream close: %s, call retry" % reason)
+            if self.task.start_time + self.task.timeout > time.time():
+                self.connection.retry_task_cb(self.task, reason)
         else:
+            # self.task.set_state("stream close: %s, finished" % reason)
             self.task.finish()
             # empty block means fail or closed.
+
         self._close_remote()
+        # self.task.set_state("stream close: %s, closed remote" % reason)
+
         self._close_cb(self.stream_id, reason)
+        # self.task.set_state("stream close: %s, called close_cb" % reason)
 
     @property
     def _local_closed(self):

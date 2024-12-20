@@ -3,9 +3,6 @@ import socket
 import struct
 import time
 
-import OpenSSL
-SSLError = OpenSSL.SSL.WantReadError
-
 import socks
 import utils
 import front_base.openssl_wrap
@@ -16,9 +13,10 @@ from front_base.connect_creator import ConnectCreator as ConnectCreatorBase
 
 class ConnectCreator(ConnectCreatorBase):
 
-    def connect_ssl(self, ip_str, sni="", close_cb=None):
+    def connect_ssl(self, ip_str, sni, host, close_cb=None):
         info = self.host_manager.get_info(ip_str)
         sni = str(info["sni"])
+        url_path = info["url_path"]
         host = sni
         ip, port = utils.get_ip_port(ip_str)
 
@@ -35,52 +33,29 @@ class ConnectCreator(ConnectCreatorBase):
         sock.settimeout(self.timeout)
 
         time_begin = time.time()
-        ip_port = (ip, port)
-        try:
-            sock.connect(ip_port)
-        except Exception as e:
-            raise socket.error('conn fail, sni:%s, top:%s e:%r' % (sni, host, e))
-
-        time_connected = time.time()
-
-        if info["client_ca"]:
-            #self.openssl_context.context.use_certificate_file(info["client_ca_fn"])
-            #self.openssl_context.set_ca(info["client_ca_fn"])
-            #self.openssl_context.context.use_privatekey_file(info["client_key_fn"])
+        if info.get("client_ca"):
             self.openssl_context.context.load_cert_chain(os.path.abspath(info["client_ca_fn"]),
                                                          os.path.abspath(info["client_key_fn"]))
 
         ssl_sock = front_base.openssl_wrap.SSLConnection(self.openssl_context.context, sock,
                                                          ip_str=ip_str,
-                                                         server_hostname=sni,
+                                                         sni=sni,
                                                          on_close=close_cb)
-
+        time_connected = time.time()
         try:
             ssl_sock.do_handshake()
         except Exception as e:
             raise socket.error('tls handshake fail, sni:%s, top:%s e:%r' % (sni, host, e))
 
-        if self.connect_force_http1:
-            ssl_sock.h2 = False
-        elif self.connect_force_http2:
+        if ssl_sock.is_support_h2():
             ssl_sock.h2 = True
         else:
-            try:
-                h2 = ssl_sock.get_alpn_proto_negotiated()
-                if h2 == "h2":
-                    ssl_sock.h2 = True
-                else:
-                    ssl_sock.h2 = False
-            except Exception as e:
-                # xlog.exception("alpn:%r", e)
-                if hasattr(ssl_sock._connection, "protos") and ssl_sock._connection.protos == "h2":
-                    ssl_sock.h2 = True
-                else:
-                    ssl_sock.h2 = False
+            ssl_sock.h2 = False
 
         time_handshaked = time.time()
 
         ssl_sock.sni = sni
+        ssl_sock.url_path = utils.to_bytes(url_path)
         self.check_cert(ssl_sock)
 
         connect_time = int((time_connected - time_begin) * 1000)

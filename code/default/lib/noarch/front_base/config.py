@@ -20,6 +20,11 @@ class ConfigBase(xconfig.Config):
         self.set_var("dispather_max_workers", 60)
         self.set_var("dispather_score_factor", 1)
         self.set_var("dispather_max_idle_workers", 30)
+        self.set_var("dispather_worker_max_continue_fail", 8)
+        self.set_var("dispather_connect_all_workers_on_startup", 0)
+        self.set_var("dispather_ping_check_speed_interval", 300)
+        self.set_var("dispather_ping_upload_size", 1024)
+        self.set_var("dispather_ping_download_size", 10240)
 
         self.set_var("max_task_num", 100)
 
@@ -28,11 +33,13 @@ class ConfigBase(xconfig.Config):
         self.set_var("http1_ping_interval", 300)
         self.set_var("http1_idle_time", 360)
         self.set_var("http1_max_process_tasks", 99999999)
+        self.set_var("http1_trace_size", 20)
 
         # http 2 worker
         self.set_var("http2_max_concurrent", 60)
-        self.set_var("http2_target_concurrent", 60)
+        self.set_var("http2_target_concurrent", 6)
         self.set_var("http2_max_timeout_tasks", 5)
+        self.set_var("http2_max_process_tasks", 900)  # Nginx will GoAway after 1000 tasks.
         self.set_var("http2_timeout_active", 15)
         self.set_var("http2_status_to_close", [])
         self.set_var("http2_show_debug", 0)
@@ -45,15 +52,18 @@ class ConfigBase(xconfig.Config):
         # connect manager
         self.set_var("https_max_connect_thread", 1)
         self.set_var("max_connect_thread", 1)
+        self.set_var("connect_create_interval", 0.1)
         self.set_var("ssl_first_use_timeout", 10)
         self.set_var("connection_pool_min", 1)
-        self.set_var("https_keep_alive", 15) # time to pass created link to worker
+        self.set_var("https_keep_alive", 15)  # time to pass created link to worker
         self.set_var("https_connection_pool_min", 1)
         self.set_var("https_connection_pool_max", 2)
         self.set_var("https_new_connect_num", 1)
         self.set_var("http1_new_connect_num", 1)
+        self.set_var("connection_max_life", 999990)
 
         # check_ip
+        self.set_var("check_ip_subdomain", "")
         self.set_var("check_ip_host", "")
         self.set_var("check_ip_path", "/")
         self.set_var("check_ip_accept_status", [200])
@@ -61,7 +71,8 @@ class ConfigBase(xconfig.Config):
 
         # connect_creator
         self.set_var("socket_timeout", 5)
-        self.set_var("connect_receive_buffer", 1024 * 128)
+        self.set_var("connect_receive_buffer", 1024 * 512)
+        self.set_var("connect_send_buffer", 1024 * 512)
         self.set_var("connect_force_http1", 0)
         self.set_var("connect_force_http2", 0)
         self.set_var("check_pkp", [])
@@ -76,12 +87,18 @@ class ConfigBase(xconfig.Config):
         self.set_var("max_good_ip_num", 100)
         self.set_var("target_handshake_time", 300)
         self.set_var("max_links_per_ip", 1)
-        self.set_var("ip_connect_interval", 5)
+        self.set_var("ip_connect_interval", 0.5)
         self.set_var("record_ip_history", 0)
+        self.set_var("scan_ip_interval", 1)
         self.set_var("down_fail_connect_interval", 60)
+        self.set_var("active_connect_interval", 0)
         self.set_var("long_fail_threshold", 300)
         self.set_var("long_fail_connect_interval", 180)
         self.set_var("short_fail_connect_interval", 10)
+        self.set_var("shuffle_ip_on_first_load", 0)
+        self.set_var("ip_speed_history_size", 10)
+        self.set_var("ip_initial_speed", 1000000)
+        self.set_var("ip_speed_save_interval", 60)
 
         # ip source
         self.set_var("use_ipv6", "auto") #force_ipv4/force_ipv6

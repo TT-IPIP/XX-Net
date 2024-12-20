@@ -1,8 +1,11 @@
 import time
 import socket
 import struct
-import urllib.parse
-import select
+
+try:
+    from urllib.parse import urlparse
+except ImportError:
+    from urlparse import urlparse
 
 import utils
 from xlog import getLogger
@@ -10,6 +13,7 @@ xlog = getLogger("x_tunnel")
 
 from . import global_var as g
 from . import proxy_session
+from . import openai_handler
 
 
 def netloc_to_host_port(netloc, default_port=80):
@@ -40,7 +44,6 @@ class Socks5Server():
     def handle(self):
         self.__class__.handle_num += 1
         try:
-            r, w, e = select.select([self.connection], [], [])
             socks_version = self.read_bytes(1)
             if not socks_version:
                 return
@@ -59,10 +62,11 @@ class Socks5Server():
                 return
 
         except socket.error as e:
-            xlog.debug('socks handler read error %r', e)
-            return
+            xlog.warn('proxy handler read error %r', e)
+            self.connection.close()
         except Exception as e:
-            xlog.exception("any err:%r", e)
+            xlog.exception("proxy handler err:%r", e)
+            self.connection.close()
 
     def read_null_end_line(self):
         sock = self.connection
@@ -208,7 +212,7 @@ class Socks5Server():
             sock.send(reply)
             return
 
-        xlog.info("Socks4:%r to %s:%d, conn_id:%d", self.client_address, addr, port, conn_id)
+        xlog.info("Socks4:%r to %s:%d, conn:%d", self.client_address, addr, port, conn_id)
         reply = b"\x00\x5a" + addr_pack + struct.pack(">H", port)
         sock.send(reply)
 
@@ -230,12 +234,12 @@ class Socks5Server():
             xlog.warn("socks5 protocol error:%r", e)
             return
 
-        socks_version = data[0]
+        socks_version = ord(data[0:1])
         if socks_version != 5:
             xlog.warn("request version:%d error", socks_version)
             return
 
-        command = data[1]
+        command = ord(data[1:2])
         if command != 1:  # 1. Tcp connect
             xlog.warn("request not supported command mode:%d", command)
             sock.send(b"\x05\x07\x00\x01")  # Command not supported
@@ -264,14 +268,20 @@ class Socks5Server():
 
         conn_id = proxy_session.create_conn(sock, addr, port)
         if not conn_id:
-            xlog.warn("create conn fail")
+            xlog.warn("socks5 create conn to %s:%d fail", addr, port)
             reply = b"\x05\x01\x00" + addrtype_pack + addr_pack + struct.pack(">H", port)
             sock.send(reply)
             return
 
-        xlog.info("socks5 %r connect to %s:%d conn_id:%d", self.client_address, addr, port, conn_id)
+        xlog.info("socks5 %r connect to %s:%d conn:%d", self.client_address, addr, port, conn_id)
         reply = b"\x05\x00\x00" + addrtype_pack + addr_pack + struct.pack(">H", port)
-        sock.send(reply)
+        try:
+            sock.send(reply)
+        except Exception as e:
+            if conn_id in g.session.conn_list:
+                g.session.conn_list[conn_id].do_stop("close_on_Socks5_reply")
+            xlog.warn("socks5 %r connect to %s:%d conn_id:%d closed:%r", self.client_address, addr, port, conn_id, e)
+            return
 
         if len(self.read_buffer) - self.buffer_start:
             g.session.conn_list[conn_id].transfer_received_data(self.read_buffer[self.buffer_start:])
@@ -304,15 +314,15 @@ class Socks5Server():
         sock = self.connection
         conn_id = proxy_session.create_conn(sock, host, port)
         if not conn_id:
-            xlog.warn("create conn fail")
+            xlog.warn("https create conn to %s:%d fail", host, port)
             sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
             return
 
-        xlog.info("https %r connect to %s:%d conn_id:%d", self.client_address, host, port, conn_id)
+        xlog.info("https %r connect to %s:%d conn:%d", self.client_address, host, port, conn_id)
         try:
             sock.send(b'HTTP/1.1 200 OK\r\n\r\n')
         except:
-            xlog.warn("https %r connect to %s:%d conn_id:%d closed.", self.client_address, host, port, conn_id)
+            xlog.warn("https %r connect to %s:%d conn:%d closed.", self.client_address, host, port, conn_id)
 
         if (len(self.read_buffer) - self.buffer_start) > 0:
             g.session.conn_list[conn_id].transfer_received_data(self.read_buffer[self.buffer_start:])
@@ -336,7 +346,7 @@ class Socks5Server():
         #    xlog.warn("https req method not known:%s", method)
 
         if url.startswith(b"http://") or url.startswith(b"HTTP://"):
-            o = urllib.parse.urlparse(url)
+            o = urlparse(url)
             host, port = netloc_to_host_port(o.netloc)
 
             p = url[7:].find(b"/")
@@ -349,24 +359,30 @@ class Socks5Server():
             lines = header_block.split(b"\r\n")
             path = url
             host = None
+            headers = {}
             for line in lines:
-                key, _, value = line.rpartition(b":")
-                if key.lower == b"host":
+                key, _, value = line.partition(b":")
+                headers[key] = value
+                if key.lower() == b"host":
                     host, port = netloc_to_host_port(value)
-                    break
             if host is None:
                 xlog.warn("http proxy host can't parsed. %s %s", req_line, header_block)
                 self.connection.send(b'HTTP/1.1 500 Fail\r\n\r\n')
                 return
 
+            if url.startswith(b"/openai/"):
+                content_length = int(headers.get(b"Content-Length", 0))
+                req_body = self.read_bytes(content_length)
+                return openai_handler.handle_openai(method, url, headers, req_body, self.connection)
+
         sock = self.connection
         conn_id = proxy_session.create_conn(sock, host, port)
         if not conn_id:
-            xlog.warn("create conn fail")
+            xlog.warn("http create conn to %s:%d fail", host, port)
             sock.send(b'HTTP/1.1 500 Fail\r\n\r\n')
             return
 
-        xlog.info("http %r connect to %s:%d conn_id:%d", self.client_address, host, port, conn_id)
+        xlog.info("http %r connect to %s:%d conn:%d", self.client_address, host, port, conn_id)
 
         new_req_line = b"%s %s %s" % (method, path, http_version)
         left_buf = new_req_line + self.read_buffer[(len(req_line) + 1):]

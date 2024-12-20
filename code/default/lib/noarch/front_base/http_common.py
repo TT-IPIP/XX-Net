@@ -1,6 +1,8 @@
+import threading
 import time
+import random
 
-import simple_queue
+from queue import Queue
 import simple_http_client
 
 
@@ -19,7 +21,8 @@ class Task(object):
         self.start_time = time.time()
         self.unique_id = "%s:%f" % (url, self.start_time)
         self.trace_time = []
-        self.body_queue = simple_queue.Queue()
+        self.body_queue = Queue()
+        self.predict_rtt = 0.5
         self.body_len = 0
         self.body_readed = 0
         self.content_length = None
@@ -55,7 +58,11 @@ class Task(object):
 
         if size:
             while self.read_buffer_len < size:
-                data = self.body_queue.get(self.timeout)
+                try:
+                    data = self.body_queue.get(timeout=self.timeout)
+                except:
+                    data = None
+
                 if not data:
                     return b''
 
@@ -75,7 +82,7 @@ class Task(object):
                 buff_view = memoryview(buff)
                 p = 0
                 for data in self.read_buffers:
-                    buff_view[p:p+len(data)] = data
+                    buff_view[p:p + len(data)] = data
                     p += len(data)
 
                 if self.read_buffer_len == size:
@@ -93,7 +100,11 @@ class Task(object):
                 data = self.read_buffers.pop(0)
                 self.read_buffer_len -= len(data)
             else:
-                data = self.body_queue.get(self.timeout)
+                try:
+                    data = self.body_queue.get(timeout=self.timeout)
+                except:
+                    data = None
+
                 if not data:
                     return b''
 
@@ -108,7 +119,7 @@ class Task(object):
             buff_view = memoryview(buff)
             p = 0
             for data in self.read_buffers:
-                buff_view[p:p+len(data)] = data
+                buff_view[p:p + len(data)] = data
                 p += len(data)
 
             self.read_buffers = []
@@ -146,9 +157,12 @@ class Task(object):
         last_time = self.start_time
         for t, stat in self.trace_time:
             time_diff = int((t - last_time) * 1000)
+            if time_diff == 0 and "get_worker" not in stat:
+                continue
+
             last_time = t
             out_list.append("%d:%s" % (time_diff, stat))
-        out_list.append(":%d" % ((time.time()-last_time)*1000))
+        out_list.append(":%d" % ((time.time() - last_time) * 1000))
         return ",".join(out_list)
 
     def response_fail(self, reason=""):
@@ -163,7 +177,8 @@ class Task(object):
         res = simple_http_client.BaseResponse(body=err_text)
         res.task = self
         res.worker = self.worker
-        self.queue.put(res)
+        if self.queue:
+            self.queue.put(res)
         self.finish()
 
     def finish(self):
@@ -175,67 +190,120 @@ class Task(object):
 
 
 class HttpWorker(object):
+    max_payload = 32 * 1024
+
     def __init__(self, logger, ip_manager, config, ssl_sock, close_cb, retry_task_cb, idle_cb, log_debug_data):
         self.logger = logger
         self.ip_manager = ip_manager
         self.config = config
         self.ssl_sock = ssl_sock
-        self.init_rtt = ssl_sock.handshake_time / 3
-        self.rtt = self.init_rtt
-        self.speed = 1
+        self.handshake = ssl_sock.handshake_time * 0.001
+        self.rtt = ssl_sock.handshake_time * 0.001
+        self.adjust = float(ssl_sock.host_info.get("adjust", 0))
+        self.streams = {}
         self.ip_str = ssl_sock.ip_str
         self.close_cb = close_cb
         self.retry_task_cb = retry_task_cb
         self.idle_cb = idle_cb
         self.log_debug_data = log_debug_data
+
+        self._lock = threading.Lock()
         self.accept_task = True
         self.keep_running = True
         self.processed_tasks = 0
-        self.speed_history = []
+        self.continue_fail_tasks = 0
+        self.rtt_history = [self.rtt,]
+        self.adjust_history = []
         self.last_recv_time = self.ssl_sock.create_time
         self.last_send_time = self.ssl_sock.create_time
+        self.life_end_time = self.ssl_sock.create_time + \
+                             random.randint(self.config.connection_max_life, int(self.config.connection_max_life * 1.5))
+        # self.logger.debug("worker.init %s %s", self.ip_str, self.ssl_sock.getsockname())
+
+    def __str__(self):
+        o = ""
+        o += " ip_str: %s\r\n" % (self.ip_str)
+        o += " running: %s\r\n" % (self.keep_running)
+        o += " processed_tasks: %d\r\n" % (self.processed_tasks)
+        o += " continue_fail_tasks: %s\r\n" % (self.continue_fail_tasks)
+        o += " handshake: %f \r\n" % self.handshake
+        o += " adjust: %f \r\n" % self.adjust
+        o += " rtt_history: %s\r\n" % (self.rtt_history)
+        o += " adjust_history: %s\r\n" % (self.adjust_history)
+        if self.version != "1.1":
+            o += "streams: %d\r\n" % len(self.streams)
+        o += " rtt: %f\r\n" % (self.rtt)
+        o += " speed: %f\r\n" % (self.ip_manager.get_speed(self.ip_str))
+        o += " score: %f\r\n" % (self.get_score())
+        return o
+
+    def update_rtt(self, rtt, predict_rtt=None):
+        self.rtt_history.append(rtt)
+        if len(self.rtt_history) > 10:
+            self.rtt_history.pop(0)
+        # self.rtt = sum(self.rtt_history) / len(self.rtt_history)
+
+        if predict_rtt:
+            adjust = rtt - predict_rtt
+            self.adjust_history.append(adjust)
+            if len(self.adjust_history) > 10:
+                self.adjust_history.pop(0)
+
+    def update_speed(self, speed):
+        self.ip_manager.update_speed(self.ip_str, speed)
 
     def update_debug_data(self, rtt, sent, received, speed):
-        self.rtt = rtt
-        self.speed = speed
-        self.speed_history.append(speed)
         self.log_debug_data(rtt, sent, received)
+        return
 
     def close(self, reason):
-        self.accept_task = False
-        self.keep_running = False
-        self.ssl_sock.close()
-        if reason not in ["idle timeout"]:
-            now = time.time()
-            inactive_time = now - self.last_recv_time
-            if inactive_time < self.config.http2_ping_min_interval:
-                self.logger.debug("%s worker close:%s inactive:%d", self.ip_str, reason, inactive_time)
-        self.ip_manager.report_connect_closed(self.ssl_sock.ip_str, reason)
-        self.close_cb(self)
+        with self._lock:
+            if not self.keep_running:
+                # self.logger.warn("worker %s already closed %s", self.ip_str, reason)
+                return
+
+            # self.logger.debug("worker.close %s reason:%s", self.ip_str, reason)
+            self.accept_task = False
+            self.keep_running = False
+            self.ssl_sock.close(reason)
+            if reason not in ["idle timeout", "life end"]:
+                now = time.time()
+                inactive_time = now - self.last_recv_time
+                if inactive_time < self.config.http2_ping_min_interval:
+                    self.logger.debug("%s worker close:%s inactive:%d", self.ip_str, reason, inactive_time)
+            self.ip_manager.report_connect_closed(self.ssl_sock.ip_str, self.ssl_sock.sni, reason)
+            self.close_cb(self)
+
+    def __del__(self):
+        # self.logger.debug("__del__ %s", self.ip_str)
+        self.close("__del__")
 
     def get_score(self):
-        now = time.time()
-        inactive_time = now - self.last_recv_time
+        # The smaller, the better
 
-        rtt = self.rtt
-        if inactive_time > 30:
-            if rtt > 1000:
-                rtt = 1000
+        score = self.handshake
+        if self.processed_tasks == 0 and len(self.streams) == 0:
+            score /= 3
 
+        speed = self.ip_manager.get_speed(self.ip_str)
         if self.version == "1.1":
-            rtt += 100
+            score += self.max_payload / speed
         else:
-            rtt += len(self.streams) * 500
+            response_body_len = self.max_payload
+            for _, stream in self.streams.items():
+                if stream.response_body_len == 0:
+                    response_body_len += self.max_payload
+                else:
+                    response_body_len += stream.response_body_len - stream.task.body_len
+            score += response_body_len / speed
 
-        if inactive_time > 1:
-            score = rtt
-        elif inactive_time < 0.1:
-            score = rtt + 1000
-        else:
-            # inactive_time < 2
-            score = rtt + (1 / inactive_time) * 1000
+            score += len(self.streams) * 0.06
 
-        return score
+        if self.config.show_state_debug:
+            self.logger.debug("get_score %s, speed:%f rtt:%d stream_num:%d score:%f", self.ip_str,
+                          speed * 0.000001, self.rtt * 1000, len(self.streams), score)
+
+        return score + self.adjust
 
     def get_host(self, task_host):
         if task_host:
@@ -243,3 +311,22 @@ class HttpWorker(object):
         else:
             return self.ssl_sock.host
 
+    def is_life_end(self):
+        now = time.time()
+        if now > self.life_end_time:
+            return "life_end_time"
+        elif now - self.last_recv_time > 230:
+            return "last_recv_time"
+        elif self.continue_fail_tasks > self.config.dispather_worker_max_continue_fail:
+            return "continue_fail"
+        elif self.processed_tasks > self.config.http2_max_process_tasks:
+            return "processed_tasks"
+        elif self.version == "1.1":
+            if self.processed_tasks > self.config.http1_max_process_tasks:
+                return "http1 max_process_tasks"
+            elif now - self.last_recv_time > self.config.http1_idle_time:
+                return "http1 last_recv_time"
+            else:
+                return False
+        else:
+            return False

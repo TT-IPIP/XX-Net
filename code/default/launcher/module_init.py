@@ -18,13 +18,22 @@ root_path = os.path.abspath(os.path.join(current_path, os.pardir))
 if root_path not in sys.path:
     sys.path.append(root_path)
 
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
-data_launcher_path = os.path.join(data_path, 'launcher')
+import env_info
+data_launcher_path = os.path.join(env_info.data_path, 'launcher')
 running_file = os.path.join(data_launcher_path, "Running.Lck")
 
 
 def start(module):
-    if not os.path.isdir(os.path.join(root_path, module)):
+    if module == "all":
+        modules = ["gae_proxy", "smart_router", "x_tunnel"]
+        for m in modules:
+            if not getattr(config,"enable_" + m):
+                continue
+
+            start(m)
+        return
+
+    elif not os.path.isdir(os.path.join(root_path, module)):
         return
 
     try:
@@ -44,7 +53,7 @@ def start(module):
                 proc_handler[module]["imp"] = __import__(module, globals(), locals(), ['local'], 0)
 
             _local = proc_handler[module]["imp"].local
-            p = threading.Thread(target=_local.start, args=([xargs]))
+            p = threading.Thread(target=_local.start, args=([xargs]), name="%s_start" % module)
             p.daemon = True
             p.start()
             proc_handler[module]["proc"] = p
@@ -69,7 +78,13 @@ def start(module):
 
 def stop(module):
     try:
-        if module not in proc_handler:
+        if module == "all":
+            modules = list(proc_handler)
+            for m in modules:
+                stop(m)
+            return
+
+        elif module not in proc_handler:
             xlog.error("module %s not running", module)
             return
 

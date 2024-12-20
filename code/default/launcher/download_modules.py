@@ -5,7 +5,7 @@ import zipfile
 import shutil
 
 from update_from_github import request, xlog, hash_file_sum
-
+import env_info
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir))
 top_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir))
@@ -78,7 +78,7 @@ def download_file(url, filename, sha256=None):
                     xlog.info("download %s to %s success.", org_url, filename)
                     return True
         except Exception as e:
-            xlog.warn("download %s to %s fail:%r", org_url, filename, e)
+            xlog.exception("download %s to %s fail:%r", org_url, filename, e)
             continue
     xlog.warn("download %s fail", org_url)
 
@@ -87,7 +87,7 @@ def download_unzip(url, extract_path):
     if os.path.isdir(extract_path):
         return True
 
-    data_root = os.path.join(top_path, 'data')
+    data_root = env_info.data_path
     download_path = os.path.join(data_root, 'downloads')
     if not os.path.isdir(download_path):
         os.mkdir(download_path)
@@ -125,17 +125,20 @@ def get_sha256(fn):
 
 def download_worker():
     switchyomega_path = os.path.join(top_path, "SwitchyOmega")
+    if not os.path.isdir(switchyomega_path):
+        return
 
+    time.sleep(150)
     sha256_fn = os.path.join(switchyomega_path, "Sha256.txt")
     download_file("https://raw.githubusercontent.com/XX-net/XX-Net/master/SwitchyOmega/Sha256.txt", sha256_fn)
     sha256_dict = get_sha256(sha256_fn)
-    download_file("https://github.com/XX-net/XX-Net/releases/download/3.15.0/SwitchyOmega.crx", os.path.join(switchyomega_path, "SwitchyOmega.crx"), sha256_dict.get("SwitchyOmega.crx", None))
-    download_file("https://github.com/XX-net/XX-Net/releases/download/3.15.0/AutoProxy.xpi", os.path.join(switchyomega_path, "AutoProxy.xpi"), sha256_dict.get("AutoProxy.xpi", None))
+    download_file("https://github.com/XX-net/XX-Net/releases/download/5.1.1/SwitchyOmega.zip",
+                  os.path.join(switchyomega_path, "SwitchyOmega.zip"), sha256_dict.get("SwitchyOmega.zip", None))
+    download_file("https://github.com/XX-net/XX-Net/releases/download/3.15.0/AutoProxy.xpi",
+                  os.path.join(switchyomega_path, "AutoProxy.xpi"), sha256_dict.get("AutoProxy.xpi", None))
 
 
 def start_download():
-    #time.sleep(10)
-    th = threading.Thread(target=download_worker)
+    th = threading.Thread(target=download_worker, name="file_downloader")
     th.start()
     return True
-

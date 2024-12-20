@@ -2,12 +2,8 @@
 # This front is for debug
 
 import time
-import threading
-import collections
 import simple_http_client
-import random
 
-from . import global_var as g
 from xlog import getLogger
 xlog = getLogger("x_tunnel")
 
@@ -18,11 +14,15 @@ continue_fail_num = 0
 success_num = 0
 fail_num = 0
 
+
 def init():
     global last_success_time, last_fail_time, continue_fail_num
 
 
 class FakeWorker(object):
+    def __init__(self):
+        self.ip_str = "127.0.0.1"
+
     def update_debug_data(self, rtt, send_data_len, dlen, speed):
         pass
 
@@ -40,7 +40,6 @@ class FakeDispatcher(object):
         self.rtts = []
         self.last_sent = self.total_sent = 0
         self.last_received = self.total_received = 0
-        #self.second_stats = Queue.deque()
         self.second_stat = {
             "rtt": 0,
             "sent": 0,
@@ -53,7 +52,7 @@ class FakeDispatcher(object):
         }
 
     def get_score(self, host=""):
-        return 1
+        return 10000000
 
     def worker_num(self):
         return 1
@@ -96,6 +95,10 @@ def request(method, host, schema="http", path="/", headers={}, data="", timeout=
     response.worker = FakeWorker()
     response.task = response.worker
     return response.text, response.status, response
+
+
+def start():
+    pass
 
 
 def stop():

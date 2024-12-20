@@ -1,13 +1,28 @@
 <ul class="nav nav-tabs">
-    <li class="active"><a href="#info" data-toggle="tab">{{ _("Info") }}</a></li>
-    <li class="hide"><a href="#advanced" data-toggle="tab">{{ _("Settings") }}</a></li>
-    <li class="hide"><a href="#plans" data-toggle="tab">{{ _("Plans") }}</a></li>
-    <li class="hide"><a href="#history" data-toggle="tab">{{ _("History") }}</a></li>
-    <li class="hide"><a href="#help" data-toggle="tab">{{ _("Help") }}</a></li>
+    <li class="" id="li-token-login"><a href="#token-login-tab" data-toggle="tab">{{ _("Token Login") }}</a></li>
+    <li class="" id="li-password-login" hidden><a href="#password-login-tab" data-toggle="tab">{{ _("Password Login") }}</a></li>
+    <li class="hide" id="li-info"><a href="#info" data-toggle="tab">{{ _("Account") }}</a></li>
+    <li class="hide" id="li-setting"><a href="#advanced" data-toggle="tab">{{ _("Settings") }}</a></li>
+    <li class="hide" id="li-plans"><a href="#plans" data-toggle="tab">{{ _("Plans") }}</a></li>
+    <li class="hide" id="li-history"><a href="#history" data-toggle="tab">{{ _("History") }}</a></li>
+    <li class="hide" id="li-help"><a href="#help" data-toggle="tab">{{ _("Help") }}</a></li>
 </ul>
 <div class="tab-content">
-    <div id="info" class="tab-pane fade in active">
-        <form id="login-form" onSubmit="onLoginSubmit(); return false;">
+    <div id="token-login-tab" class="tab-pane fade in hide">
+        <form id="token-login-form" onSubmit="onTokenLoginSubmit(); return false;">
+            <p >{{ _("Input login token from https://xx-net.com.") }}</p>
+            <p>
+                <label for="login-token">{{ _("Token") }}</label>
+                <input id="login-token" type="text"/>
+            </p>
+            <p>
+                <button class="btn btn-primary btn-block" type="submit">{{ _("Login") }}</button>
+            </p>
+        </form> <!-- #login-form -->
+    </div>
+
+    <div id="password-login-tab" class="tab-pane fade in ">
+        <form id="password-login-form" onSubmit="onLoginSubmit(); return false;">
             <h4>{{ _("Login") }}</h4>
             <p>
                 <label for="login-username">{{ _("Email") }}</label>
@@ -20,10 +35,61 @@
             <p>
                 <button class="btn btn-primary btn-block" type="submit">{{ _("Login") }}</button>
             </p>
-            <p class="text-center">
+            <p class="text-center" hidden>
                 <a id="register-trigger" href="javascript:void(0);">{{ _("Haven't an account?") }}</a>
             </p>
+            <p class="text-center">
+                <a id="reset-password-trigger" href="javascript:void(0);">{{ _("Forget password?") }}</a>
+            </p>
         </form> <!-- #login-form -->
+
+        <form id="request-reset-form" class="hide" onSubmit="onResetRequest(); return false;">
+            <h4>{{ _("Reset password") }}</h4>
+            <p class="p80" >
+                <label for="request-reset-username">{{ _("Email") }}</label>
+                <input id="request-reset-username" type="text"/>
+            </p>
+            <p>
+                <button class="btn btn-primary btn-block p80" type="submit">{{ _("Next") }}</button>
+            </p>
+        </form> <!-- #register-form -->
+
+        <form id="reset-password-check-form" class="hide" onSubmit="onResetPasswordCheck(); return false;">
+            <h4>{{ _("Input confirmation code") }}</h4>
+            <p >{{ _("The confirmation code has sent to your email, please check your email box.") }}</p>
+            <p class="p80" >
+                <label for="reset-confirmation-code">{{ _("Confirmation Code") }}</label>
+                <input id="reset-confirmation-code" type="text"/>
+            </p>
+            <p>
+                <button class="btn btn-primary btn-block p80" type="submit">{{ _("Next") }}</button>
+            </p>
+        </form> <!-- #register-form -->
+
+        <form id="change-password-form" class="hide" onSubmit="onChangePassword(); return false;">
+            <h4>{{ _("Set new password") }}</h4>
+            <p >{{ _("Please input your new password.") }}</p>
+            <p class="p80" >
+                <label for="new-password">{{ _("Password") }}</label>
+                <input id="new-password" type="password"/>
+            </p>
+            <p class="p80" >
+                <label for="new-password2">{{ _("Confirm your password") }}</label>
+                <input id="new-password2" type="password"/>
+            </p>
+            <p>
+                <button class="btn btn-primary btn-block p80" type="submit">{{ _("Submit") }}</button>
+            </p>
+        </form> <!-- #register-form -->
+
+        <div id="password-reset-successful" class="hide" >
+            <h4>{{ _("Your password has reset successfully.") }}</h4>
+            <p >{{ _("Please use your new password to login.") }}</p>
+            <p>
+                <button class="btn btn-primary btn-block p80" id="goto-login-trigger">{{ _("Login") }}</button>
+            </p>
+        </div> <!-- #register-form -->
+
         <form id="register-form" class="hide" onSubmit="onRegisterSubmit(); return false;">
             <h4>{{ _("Register") }}</h4>
             <p>
@@ -45,14 +111,16 @@
                 <a id="login-trigger" href="javascript:void(0);">{{ _("Already have an account?") }}</a>
             </p>
         </form> <!-- #register-form -->
+    </div>
+    <div id="info" class="tab-pane fade in active">
         <div id="account-information" class="hide">
             <div class="section">
-                <h4>{{ _("Summary") }}</h4>
+<!--                <h4>{{ _("Summary") }}</h4>-->
                 <div class="row-fluid">
-                    <div class="span4">
+                    <div class="span2">
                         <label for="login-account">{{ _("Account") }}</label>
                     </div> <!-- .span4 -->
-                    <div class="span8">
+                    <div class="span6">
                         <p>
                             <span id="login-account">N/a</span>
                             <a id="logout-trigger" href="javascript:void(0)">[{{ _("Logout") }}]</a>
@@ -60,40 +128,44 @@
                     </div> <!-- .span8 -->
                 </div> <!-- .row-fluid -->
                 <div class="row-fluid">
-                    <div class="span4">
+                    <div class="span2">
                         <label for="credit">{{ _("Credit") }}</label>
                     </div> <!-- .span4 -->
-                    <div class="span8">
+                    <div class="span4">
                         <p>
                             <span id="credit">N/a</span>
                             <!-- <a id="charge-trigger" href="javascript:void(0);">[{{ _("Charge") }}]</a> -->
-                            <a id="transfer-credit-trigger" href="javascript:void(0);">[{{ _("Transfer") }}]</a>
+<!--                            <a id="transfer-credit-trigger" href="javascript:void(0);">[{{ _("Transfer") }}]</a>-->
                         </p>
                     </div> <!-- .span8 -->
                 </div> <!-- .row-fluid -->
                 <div class="row-fluid">
-                    <div class="span4">
-                        <label for="bandwidth">{{ _("Bandwidth") }}</label>
+                    <div class="span2">
+                        <label for="openai_balance">{{ _("OpenAI Credit") }}</label>
                     </div> <!-- .span4 -->
-                    <div class="span8">
+                    <div class="span4">
                         <p>
-                            <span id="bandwidth">N/a</span>
+                            <span id="openai_balance">N/a</span>
+                            <!-- <a id="charge-trigger" href="javascript:void(0);">[{{ _("Charge") }}]</a> -->
+<!--                            <a id="transfer-credit-trigger" href="javascript:void(0);">[{{ _("Transfer") }}]</a>-->
                         </p>
                     </div> <!-- .span8 -->
                 </div> <!-- .row-fluid -->
             </div> <!-- .section -->
             <div class="section">
-                <h4>{{ _("Available Bandwidth") }}</h4>
-                <p id="no-bandwidth">{{ _("No bandwidth available.") }}</p>
-                <table id="available-bandwidth" class="table hide">
-                    <thead>
-                        <tr>
-                            <th>{{ _("Expire Time") }}</th>
-                            <th>{{ _("Left Bandwidth") }}</th>
-                        </tr>
-                    </thead>
-                    <tbody></tbody>
-                </table>
+                <h4>{{ _("Available Plan") }}:</h4>
+                <p id="no-bandwidth">&nbsp;&nbsp;&nbsp;{{ _("No Valid Plan available.") }}</p>
+                <div id="available-plan">
+                    <table id="available-bandwidth" class="table hide">
+                        <thead>
+                            <tr>
+                                <th>{{ _("Expire Time") }}</th>
+    <!--                            <th>{{ _("Left Bandwidth") }}</th>-->
+                            </tr>
+                        </thead>
+                        <tbody></tbody>
+                    </table>
+                </div>
             </div> <!-- .section -->
         </div> <!-- #account-information -->
     </div> <!-- #info -->
@@ -111,7 +183,7 @@
             </div>
             <br/>
 
-            <div class="row-fluid">
+            <div class="row-fluid" hidden>
                 <div class="span3">
                     <label for="promoter">{{ _("Promoter (<a href='https://github.com/XX-net/XX-Net/wiki/X-Tunnel-Promote-Plan'>Help</a>)") }}</label>
                 </div>
@@ -128,7 +200,7 @@
             </div>
         </form>
     </div> <!-- #info -->
-    <div id="plans" class="tab-pane fade in">
+    <div id="plans" class="tab-pane fade in" style="padding-left:0">
         <div class="section">
             <h4>{{ _("Plans and Pricing") }}</h4>
             <div class="row-fluid">
@@ -336,17 +408,89 @@
 <!-- Summary -->
 <script type="text/javascript">
     $('#register-trigger').click(function () {
-        $('#login-form').addClass('hide');
+        $('#password-login-form').addClass('hide');
         $('#register-form').removeClass('hide');
     });
-</script>
-<script type="text/javascript">
+    $('#reset-password-trigger').click(function () {
+        $('#password-login-form').addClass('hide');
+        $('#request-reset-form').removeClass('hide');
+    });
     $('#login-trigger').click(function () {
         $('#register-form').addClass('hide');
-        $('#login-form').removeClass('hide');
+        $('#password-login-form').removeClass('hide');
+    });
+    $('#goto-login-trigger').click(function () {
+        $('#password-reset-successful').addClass('hide');
+        $('#password-login-form').removeClass('hide');
     });
 </script>
 <script type="text/javascript">
+    var standalone = window.navigator.standalone,
+        userAgent = window.navigator.userAgent.toLowerCase(),
+        safari = /safari/.test( userAgent ),
+        ios = /iphone|ipod|ipad/.test( userAgent );
+    var uiwebview = false;
+
+    if( ios ) {
+        if ( !standalone && safari ) {
+            //browser
+        } else if ( standalone && !safari ) {
+            //standalone
+        } else if ( !standalone && !safari ) {
+            uiwebview = true;
+        };
+    } else {
+        if (typeof window.Android !== "undefined"){
+            uiwebview = true;
+        }
+    }
+
+    function show_login_form(){
+        $('ul.nav-tabs > li').addClass('hide');
+        $('#li-token-login').removeClass('hide');
+        $('#li-password-login').removeClass('hide');
+
+        if(uiwebview || true) {
+            $('#li-token-login').addClass('active');
+
+            $('#password-login-tab').addClass('hide');
+
+            $('#token-login-tab').removeClass('hide');
+            $('#token-login-tab').addClass('active');
+        } else {
+            $('#li-password-login').addClass('active');
+
+            $('#token-login-tab').addClass('hide');
+
+            $('#password-login-tab').removeClass('hide');
+            $('#password-login-tab').addClass('active');
+        }
+
+        $('#account-information').addClass('hide');
+    }
+    show_login_form();
+
+    function show_uinfo_menus() {
+        $('#token-login-tab').removeClass('active');
+        $('#password-login-tab').removeClass('active');
+        $('#info').addClass('in');
+        $('#info').addClass('active');
+
+        $('#li-token-login').removeClass('active');
+        $('#li-password-login').removeClass('active');
+        $('#li-token-login').addClass('hide');
+        $('#li-password-login').addClass('hide');
+
+        $('#li-info').removeClass('hide');
+        $('#li-info').addClass('active');
+        $('#li-setting').removeClass('hide');
+        if (!uiwebview) {
+            $('#li-plans').removeClass('hide');
+            $('#li-history').removeClass('hide');
+            $('#li-help').removeClass('hide');
+        }
+    }
+
     function getUserInfo(force) {
         var url = '/module/x_tunnel/control/info';
         if (force) {
@@ -392,10 +536,8 @@
                 tipClose();
                 window.refresh_timer.play();
 
-                $('.nav-tabs > li').removeClass('hide');
+                show_uinfo_menus();
 
-                $('#register-form').addClass('hide');
-                $('#login-form').addClass('hide');
                 $('#account-information').removeClass('hide');
 
                 $('#login-account').html(result['login_account']);
@@ -404,6 +546,7 @@
                 window.promote_code = result['promote_code'];
                 $('#promoter').html(result['promoter']);
                 $('#credit').html(getCreditForHumanReading(result['balance']));
+                $('#openai_balance').html("$" + parseFloat(result['openai_balance']).toFixed(6));
 
                 $('#bandwidth').html(getBandwidthForHumanReading(result['quota']));
 
@@ -411,6 +554,8 @@
 
                 update_paypal_button_id(result['paypal_button_id']);
                 updatePlans(result['plans']);
+
+                window.refresh_timer.stop();
             }
         });
     }
@@ -419,17 +564,27 @@
     function getAvailableBandwidth(bandwidthList) {
         $('#available-bandwidth tbody').empty();
 
+        var has_plan = false;
         if (bandwidthList['current']) {
             displayBandwidth(bandwidthList['current']);
+            has_plan = true;
         }
         if (bandwidthList['backup']) {
             bandwidthList['backup'].forEach(function (entry) {
                 displayBandwidth(entry);
+                has_plan = true;
             });
         }
 
-        $('#no-bandwidth').addClass('hide');
-        $('#available-bandwidth').removeClass('hide');
+        if (has_plan) {
+            $('#no-bandwidth').addClass('hide');
+            $('#available-plan').removeClass('hide');
+            $('#available-bandwidth').removeClass('hide');
+        }else{
+            $('#no-bandwidth').removeClass('hide');
+            $('#available-plan').addClass('hide');
+            $('#available-bandwidthn').addClass('hide');
+        }
     }
 
 </script>
@@ -464,22 +619,32 @@
             var cost = plan_info["cost"];
             var quota_G = plan_info["quota_G"];
             var time_limit_month = plan_info["time_limit_month"];
+            var monthly_cost = cost / time_limit_month;
 
-            var text = `<li class="span4">
+            var text = `<div class="plan-block span4">
                         <div class="thumbnail">
                             <div class="caption">
-                                <h1 class="price"><sup>$</sup> %s</h1><ul class="details">
+                                <p class="price" style="text-align:center">
+                                    <font style="font-size:2rem"
+                                        <sup>$</sup>
+                                         %s
+                                     </font>
+                                     {{ _("Per Month") }}
+                                </p>
+
+                                <ul class="details">
                                     <li>
-                                        <div class="row-fluid">
-                                            <div class="span4 text-right">%s</div> <!-- .span4 -->
-                                            <div class="span8">GB {{ _("Bandwidth") }}</div> <!-- .span8 -->
-                                        </div> <!-- .row-fluid -->
+                                        <p style="text-align:center">
+                                            %s
+                                            {{ _("Months") }}
+                                        </p>
                                     </li>
                                     <li>
-                                        <div class="row-fluid">
-                                            <div class="span4 text-right">%s</div> <!-- .span4 -->
-                                            <div class="span8">{{ _("Months") }}</div> <!-- .span8 -->
-                                        </div> <!-- .row-fluid -->
+                                        <p style="text-align:center">
+                                            $
+                                            %s
+                                            {{ _("Total") }}
+                                        </p>
                                     </li>
                                 </ul>
                                 <p>
@@ -487,7 +652,7 @@
                                 </p>
                             </div> <!-- .caption -->
                         </div> <!-- .thumbnail -->
-                    </li>`.format(cost, quota_G, time_limit_month, plan, title);
+                    </div>`.format(monthly_cost, time_limit_month, cost, plan, title);
             $('#plan-list').append(text);
             $('#charge-plan').append('<option value="%s">{{ _("%s") }} $%s</option>'.format(title, title, cost));
 
@@ -502,7 +667,7 @@
             expireTimeString    = expireTimeObj.toISOString().substring(0, 10);
             bandwidth           = getBandwidthForHumanReading(bandwidthRecord['quota']);
 
-        $('#available-bandwidth tbody').append('<tr><td><span class="expire-time" data-value="%s">%s</span></td><td><span class="bandwidth">%s</span> <a href="javascript:void(0);" class="transfer">[{{ _("Transfer") }}]</a></td></tr>'.format(expireTime, expireTimeString, bandwidth));
+        $('#available-bandwidth tbody').append('<tr><td><span class="expire-time" data-value="%s">%s</span></td></tr>'.format(expireTime, expireTimeString));
     }
 </script>
 <script type="text/javascript">
@@ -559,6 +724,51 @@
     }
 </script>
 <script type="text/javascript">
+    function onTokenLoginSubmit() {
+        var login_token = $('#login-token').val();
+
+        if (!login_token){
+            tip('{{ _("Please input login token." )}}', 'error', false);
+            return;
+        }
+
+        tip('{{ _("Logining ...") }}', 'info', false);
+        $('button[type=submit]', '#token-login-form').html('{{ _("Please wait ...") }}');
+        $('button[type=submit]', '#token-login-form').attr('disabled', 'disabled');
+        return doTokenLoginAction(login_token);
+    }
+
+    function doTokenLoginAction(login_token) {
+        var postData = {
+            'login_token': login_token,
+        };
+
+        $.ajax({
+            type: 'POST',
+            url: '/module/x_tunnel/control/token_login',
+            data: postData,
+            dataType: 'JSON',
+            success: function (result) {
+                if (result['res'] == 'success') {
+                    getUserInfo(0);
+                } else {
+                    if (result['reason'] == "status:'UNKNOWN'" || result['reason'] == "status:False") {
+                        tip('{{ _("Connect to server fail, check Front log first.") }}', 'warning', false);
+                    } else if (result['reason'] == "auth fail") {
+                        tip('{{ _("Incorrect Email or password.") }}', 'error', false);
+                    } else if (result['reason'] == "token invalid") {
+                        tip('{{ _("Invalid token.") }}', 'error', false);
+                    } else {
+                        tip('{{ _("Login fail:") }}' + result['reason'], 'error', false);
+                    }
+
+                    $('button[type=submit]', '#token-login-form').html('{{ _("Login") }}');
+                    $('button[type=submit]', '#token-login-form').removeAttr('disabled');
+                }
+            }
+        });
+    }
+
     function onLoginSubmit() {
         var username = $('#login-username').val(),
             password = $('#login-password').val();
@@ -567,7 +777,7 @@
             tip('{{ _("Email seems invalid." )}}', 'error', false);
             return;
         } else if (password.length < 6) {
-            tip('{{ _("Password needs at least 6 charactors, and no more than 20.") }}', 'error', false);
+            tip('{{ _("Password needs at least 6 characters, and no more than 20.") }}', 'error', false);
             return;
         }
 
@@ -575,6 +785,52 @@
         $('button[type=submit]', '#login-form').html('{{ _("Please wait ...") }}');
         $('button[type=submit]', '#login-form').attr('disabled', 'disabled');
         return doLoginAction(username, password);
+    }
+    function onResetRequest() {
+        var username = $('#request-reset-username').val();
+
+        if (!isEmailLegal(username)) {
+            tip('{{ _("Email seems invalid." )}}', 'error', false);
+            return;
+        }
+
+        tip('{{ _("Loading ...") }}', 'info', false);
+        $('button[type=submit]', '#request-reset-form').html('{{ _("Please wait ...") }}');
+        $('button[type=submit]', '#request-reset-form').attr('disabled', 'disabled');
+        return doRequestResetPassword(username);
+    }
+    function onResetPasswordCheck() {
+        var username = $('#request-reset-username').val();
+        var code = $('#reset-confirmation-code').val();
+
+        if (code.length < 6) {
+            tip('{{ _("Please input invalid confirmation code." )}}', 'error', false);
+            return;
+        }
+
+        tip('{{ _("Loading ...") }}', 'info', false);
+        $('button[type=submit]', '#reset-password-check-form').html('{{ _("Please wait ...") }}');
+        $('button[type=submit]', '#reset-password-check-form').attr('disabled', 'disabled');
+        return doResetPasswordCheck(username, code);
+    }
+    function onChangePassword() {
+        var username = $('#request-reset-username').val();
+        var code = $('#reset-confirmation-code').val();
+        var password = $('#new-password').val();
+        var password2 = $('#new-password2').val();
+
+        if (password.length < 6) {
+            tip('{{ _("Password needs at least 6 characters, and no more than 20.") }}', 'error', false);
+            return;
+        } else if (password != password2) {
+            tip('{{ _("Passwords are not match.") }}', 'error', false);
+            return;
+        }
+
+        tip('{{ _("Loading ...") }}', 'info', false);
+        $('button[type=submit]', '#change-password-form').html('{{ _("Please wait ...") }}');
+        $('button[type=submit]', '#change-password-form').attr('disabled', 'disabled');
+        return doChangePassword(username, code, password);
     }
 </script>
 <script type="text/javascript">
@@ -600,12 +856,127 @@
                         tip('{{ _("Incorrect Email or password.") }}', 'error', false);
                     } else if (result['reason'] == "account not exist") {
                         tip('{{ _("Incorrect Email or password.") }}', 'error', false);
+                    } else if (result['reason'] == "status:602") {
+                        tip('{{ _("Login failed, please try login using token.") }}', 'error', false);
                     } else {
                         tip('{{ _("Login fail:") }}' + result['reason'], 'error', false);
                     }
 
                     $('button[type=submit]', '#login-form').html('{{ _("Login") }}');
                     $('button[type=submit]', '#login-form').removeAttr('disabled');
+                }
+            }
+        });
+    }
+    function doRequestResetPassword(username) {
+        var postData = {
+            'stage': "request_reset_password",
+            'username': username,
+        };
+
+        $.ajax({
+            type: 'POST',
+            url: '/module/x_tunnel/control/reset_password',
+            data: postData,
+            dataType: 'JSON',
+            success: function (result) {
+                $('button[type=submit]', '#request-reset-form').html('{{ _("Next") }}');
+                $('button[type=submit]', '#request-reset-form').removeAttr('disabled');
+
+                if (result['res'] == 'success') {
+                    $('#request-reset-form').addClass('hide');
+                    $('#reset-password-check-form').removeClass('hide');
+                    tipClose();
+                } else {
+                    if (result['reason'] == "status:'UNKNOWN'" || result['reason'] == "network_fail") {
+                        tip('{{ _("Connect to server fail, check Front log first.") }}', 'warning', false);
+                    } else if (result['reason'] == "account not exists") {
+                        tip('{{ _("Account not exist.") }}', 'error', false);
+                    } else if (result['reason'] == "try again later") {
+                        tip('{{ _("Try again later.") }}', 'error', false);
+                    } else {
+                        tip('{{ _("Request fail:") }}' + result['reason'], 'error', false);
+                    }
+                }
+            }
+        });
+    }
+    function doResetPasswordCheck(username, code) {
+        var postData = {
+            'stage': "reset_password_check",
+            'username': username,
+            'code': code,
+        };
+
+        $.ajax({
+            type: 'POST',
+            url: '/module/x_tunnel/control/reset_password',
+            data: postData,
+            dataType: 'JSON',
+            success: function (result) {
+                $('button[type=submit]', '#eset-password-check-form').html('{{ _("Next") }}');
+                $('button[type=submit]', '#eset-password-check-form').removeAttr('disabled');
+
+                if (result['res'] == 'success') {
+                    $('#reset-password-check-form').addClass('hide');
+                    $('#change-password-form').removeClass('hide');
+                    tipClose();
+                } else {
+                    if (result['reason'] == "status:'UNKNOWN'" || result['reason'] == "network_fail") {
+                        tip('{{ _("Connect to server fail, check Front log first.") }}', 'warning', false);
+                    } else if (result['reason'] == "account not exists") {
+                        tip('{{ _("Account not exist.") }}', 'error', false);
+                    } else if (result['reason'] == "code expired") {
+                        tip('{{ _("Confirmation code expired, please restart again.") }}', 'error', false);
+                    } else if (result['reason'] == "exceed max retry times") {
+                        tip('{{ _("You have exceeded the retry limitation.") }}', 'error', false);
+                    } else if (result['reason'] == "code not match") {
+                        tip('{{ _("The code is not match, please check your code.") }}', 'error', false);
+                    } else {
+                        tip('{{ _("Request fail:") }}' + result['reason'], 'error', false);
+                    }
+                }
+            }
+        });
+    }
+    function doChangePassword(username, code, password) {
+        var postData = {
+            'stage': "change_password",
+            'username': username,
+            'code': code,
+            'password': password,
+        };
+
+        $.ajax({
+            type: 'POST',
+            url: '/module/x_tunnel/control/reset_password',
+            data: postData,
+            dataType: 'JSON',
+            success: function (result) {
+                $('button[type=submit]', '#change-password-form').html('{{ _("Submit") }}');
+                $('button[type=submit]', '#change-password-form').removeAttr('disabled');
+
+                if (result['res'] == 'success') {
+                    $('#change-password-form').addClass('hide');
+                    $('#password-reset-successful').removeClass('hide');
+
+                    $('#request-reset-username').val("");
+                    $('#reset-confirmation-code').val("");
+                    tipClose();
+                } else {
+                    if (result['reason'] == "status:'UNKNOWN'" || result['reason'] == "network_fail") {
+                        tip('{{ _("Connect to server fail, check Front log first.") }}', 'warning', false);
+                    } else if (result['reason'] == "account not exists") {
+                        tip('{{ _("Account not exist.") }}', 'error', false);
+                    } else if (result['reason'] == "code expired") {
+                        tip('{{ _("Confirmation code expired, please restart again.") }}', 'error', false);
+                    } else if (result['reason'] == "exceed max retry times") {
+                        tip('{{ _("You have exceeded the retry limitation.") }}', 'error', false);
+                    } else if (result['reason'] == "code not match") {
+                        tip('{{ _("The code is not match, please check your code.") }}', 'error', false);
+                    } else {
+                        tip('{{ _("Request fail:") }}' + result['reason'], 'error', false);
+                    }
                 }
             }
         });
@@ -722,26 +1093,26 @@
         $('button[type=submit]', '#adv-setting').attr('disabled', 'disabled');
 
         var server = $("#server-selector").val();
-        var promoter = $("#promoter").val();
-        if (promoter.length != 0 && promoter.length != 8) {
-            tip('{{ _("Promoter is invalid.") }}', 'error', false);
-            window.refresh_timer.stop();
-            return;
-        }
+<!--        var promoter = $("#promoter").val();-->
+<!--        if (promoter.length != 0 && promoter.length != 8) {-->
+<!--            tip('{{ _("Promoter is invalid.") }}', 'error', false);-->
+<!--            window.refresh_timer.stop();-->
+<!--            return;-->
+<!--        }-->
 
-        var promote_code = window.promote_code;
-        if (promoter == promote_code){
-            tip('{{ _("Can\'t promote yourself.") }}', 'error', false);
-            window.refresh_timer.stop();
-            return;
-        }
+<!--        var promote_code = window.promote_code;-->
+<!--        if (promoter == promote_code){-->
+<!--            tip('{{ _("Can\'t promote yourself.") }}', 'error', false);-->
+<!--            window.refresh_timer.stop();-->
+<!--            return;-->
+<!--        }-->
 
         $.ajax({
             type: 'POST',
             url: '/module/x_tunnel/control/config?cmd=set',
             data: {
                 'server': server,
-                'promoter': promoter
+<!--                'promoter': promoter-->
             },
             dataType: 'JSON',
             success: function (result) {
@@ -768,9 +1139,8 @@
             dataType: 'JSON',
             success: function (result) {
                 window.refresh_timer.stop();
-                $('ul.nav-tabs > li').not(':first').addClass('hide');
-                $('#account-information').addClass('hide');
-                $('#login-form').removeClass('hide');
+
+                show_login_form();
 
                 $('button[type=submit]', '#login-form').html('{{ _("Login") }}');
                 // Fix bugs in Firefox
@@ -845,18 +1215,18 @@
         });
     }
 </script>
-<script type="text/javascript">
-    $('#available-bandwidth').delegate('a.transfer', 'click', function () {
-        var maxAvailableBandwidth = $('.bandwidth', $(this).parent()).html(),
-            expireTime            = $('.expire-time', $(this).parent().parent()).attr('data-value');
+<!--<script type="text/javascript">-->
+<!--    $('#available-bandwidth').delegate('a.transfer', 'click', function () {-->
+<!--        var maxAvailableBandwidth = $('.bandwidth', $(this).parent()).html(),-->
+<!--            expireTime            = $('.expire-time', $(this).parent().parent()).attr('data-value');-->
 
-        $('.alert', '#transfer-bandwidth-modal').addClass('hide');
-        $('#transfer-bandwidth-amount').attr('placeholder', '{{ _("Max Available Bandwidth: ") }}' + maxAvailableBandwidth);
-        $('#bandwidth-expire-time').val(expireTime);
+<!--        $('.alert', '#transfer-bandwidth-modal').addClass('hide');-->
+<!--        $('#transfer-bandwidth-amount').attr('placeholder', '{{ _("Max Available Bandwidth: ") }}' + maxAvailableBandwidth);-->
+<!--        $('#bandwidth-expire-time').val(expireTime);-->
 
-        $('#transfer-bandwidth-modal').modal();
-    });
-</script>
+<!--        $('#transfer-bandwidth-modal').modal();-->
+<!--    });-->
+<!--</script>-->
 <script type="text/javascript">
     $('.btn-primary', '#transfer-bandwidth-modal').click(function () {
         var transferAccount = $('#transfer-bandwidth-username').val(),
@@ -1012,7 +1382,7 @@
                 }
 
                 result['history'].forEach(function (entry) {
-                    displayHistory(entry[1]);
+                    displayHistory(entry);
                 });
 
                 $('#get-history-button').html('{{ _("Get") }}');
@@ -1023,12 +1393,13 @@
 </script>
 <script type="text/javascript">
     function displayHistory(item) {
-        var timeString = item['time'];
-        delete item['time'];
+        var timestamp = item[0];
+        var t = new Date(timestamp*1000);
+        var timeString = t.getFullYear() + "-" + (t.getMonth()+1) + "-" + t.getDate() + " " + t.getHours() + ":" + t.getMinutes();
 
         var message = '';
-        for (property in item) {
-            message += property + ':' + item[property] + '; ';
+        for (property in item[1]) {
+            message += property + ':' + item[1][property] + '; ';
         }
 
         $('#history-list tbody').append('<tr><td>%s</td><td>%s</td></tr>'.format(timeString, message));

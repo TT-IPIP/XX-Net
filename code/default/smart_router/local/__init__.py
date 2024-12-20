@@ -1,19 +1,24 @@
 import os
 import sys
-from . import apis
-
-from xlog import getLogger
-xlog = getLogger("smart_router")
-xlog.set_buffer(500)
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 launcher_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, "launcher"))
 
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data', "smart_router"))
+
+import env_info
+data_path = os.path.join(env_info.data_path, "smart_router")
+
 if launcher_path not in sys.path:
     sys.path.append(launcher_path)
 
+
+if not os.path.isdir(data_path):
+    os.mkdir(data_path)
+
+from xlog import getLogger
+xlog = getLogger("smart_router", log_path=data_path, save_start_log=200, save_warning_log=True)
+xlog.set_buffer(100)
 
 import xconfig
 import simple_http_server
@@ -25,6 +30,7 @@ except:
     proc_handler = None
 
 
+from . import apis
 from . import global_var as g
 from . import dns_server
 from . import dns_query
@@ -48,8 +54,6 @@ def is_ready():
 
 def load_config():
     global g
-    if not os.path.isdir(data_path):
-        os.mkdir(data_path)
 
     config_path = os.path.join(data_path, 'config.json')
     config = xconfig.Config(config_path)
@@ -64,6 +68,7 @@ def load_config():
     config.set_var("dns_bind_ip", "127.0.0.1")
     config.set_var("dns_port", 53)
     config.set_var("dns_backup_port", 8053)
+    config.set_var("udp_relay_port", 8086)
 
     config.set_var("proxy_bind_ip", "127.0.0.1")
     config.set_var("proxy_port", 8086)
@@ -74,13 +79,14 @@ def load_config():
     config.set_var("dns_ttl", 60*30)
     config.set_var("direct_split_SNI", 1)
 
-    config.set_var("pac_policy", "black_GAE")
+    config.set_var("pac_policy", "smart-router")
     config.set_var("country_code", "CN")
     config.set_var("auto_direct", 1)
     config.set_var("auto_direct6", 0)
     config.set_var("auto_gae", 1)
     config.set_var("enable_fake_ca", 1)
-    config.set_var("block_advertisement", 1)
+    config.set_var("bypass_speedtest", 1)
+    config.set_var("block_advertisement", 0)
 
     config.set_var("log_debug", 0)
 
@@ -102,6 +108,7 @@ def start(args):
         g.gae_proxy = proc_handler["gae_proxy"]["imp"].local
         g.gae_proxy_listen_port = g.gae_proxy.config.config.listen_port
     else:
+        g.gae_proxy = None
         xlog.debug("gae_proxy not running")
 
     if "x_tunnel" in proc_handler:
@@ -125,7 +132,6 @@ def start(args):
     g.connect_manager = connect_manager.ConnectManager()
     g.pipe_socks = pipe_socks.PipeSocks(g.config.pip_cache_size)
     g.pipe_socks.run()
-    g.dns_query = dns_query.CombineDnsQuery()
 
     allow_remote = args.get("allow_remote", 0)
 
@@ -140,7 +146,9 @@ def start(args):
     addresses = [(listen_ip, g.config.proxy_port) for listen_ip in listen_ips]
 
     g.proxy_server = simple_http_server.HTTPServer(addresses,
-                                                   proxy_handler.ProxyServer, logger=xlog)
+                                                   proxy_handler.ProxyServer,
+                                                   logger=xlog,
+                                                   check_listen_interval=60)
     g.proxy_server.start()
     xlog.info("Proxy server listen:%s:%d.", listen_ips, g.config.proxy_port)
 
@@ -152,12 +160,17 @@ def start(args):
     if allow_remote and ("0.0.0.0" not in listen_ips or "::" not in listen_ips):
         listen_ips.append("0.0.0.0")
 
+    g.local_ips = dns_query.get_local_ips()
+    g.dns_query = dns_query.CombineDnsQuery()
+
     g.dns_srv = dns_server.DnsServer(
         bind_ip=listen_ips, port=g.config.dns_port,
         backup_port=g.config.dns_backup_port,
         ttl=g.config.dns_ttl)
+    g.dns_srv.start()
+    xlog.debug("DNS server port %d", g.dns_srv.listen_port)
+
     ready = True
-    g.dns_srv.server_forever()
 
 
 def stop():

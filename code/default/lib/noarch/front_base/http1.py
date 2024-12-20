@@ -1,5 +1,4 @@
-
-import queue
+from queue import Queue
 import threading
 
 from .http_common import *
@@ -32,17 +31,17 @@ class Http1Worker(HttpWorker):
         self.trace_time.append([ssl_sock.create_time, "connect"])
         self.record_active("init")
 
-        self.task_queue = queue.Queue()
-        threading.Thread(target=self.work_loop).start()
+        self.task_queue = Queue()
+        threading.Thread(target=self.work_loop, name="%s_http1_work_loop" % self.logger.name).start()
         self.idle_cb()
 
-        if self.config.http1_first_ping_wait or \
-            self.config.http1_ping_interval or \
-            self.config.http1_idle_time:
-            threading.Thread(target=self.keep_alive_thread).start()
+        if self.config.http1_first_ping_wait or self.config.http1_ping_interval:
+            threading.Thread(target=self.keep_alive_thread, name="%s_http1_keep_alive" % self.logger.name).start()
 
     def record_active(self, active=""):
         self.trace_time.append([time.time(), active])
+        if len(self.trace_time) > self.config.http1_trace_size:
+            self.trace_time.pop(0)
         # self.logger.debug("%s stat:%s", self.ip, active)
 
     def get_trace(self):
@@ -69,26 +68,27 @@ class Http1Worker(HttpWorker):
     def keep_alive_thread(self):
         while time.time() - self.ssl_sock.create_time < self.config.http1_first_ping_wait:
             if not self.keep_running:
-                self.close("exit ")
+                self.close("exit")
                 return
-            time.sleep(1)
+
+            time.sleep(3)
 
         if self.config.http1_first_ping_wait and self.processed_tasks == 0:
             self.task_queue.put("ping")
 
         if self.config.http1_ping_interval:
             while self.keep_running:
-                time_to_ping = max(self.config.http1_ping_interval - (time.time() - self.last_recv_time), 0.2)
+                time_to_ping = max(self.config.http1_ping_interval - (time.time() - self.last_recv_time), 3)
                 time.sleep(time_to_ping)
 
                 if not self.request_onway and \
-                        time.time() - self.last_recv_time > self.config.http1_ping_interval - 1:
+                        time.time() - self.last_recv_time > self.config.http1_ping_interval - 3:
                     self.task_queue.put("ping")
-                    time.sleep(1)
+                    time.sleep(3)
 
         elif self.config.http1_idle_time:
             while self.keep_running:
-                time_to_sleep = max(self.config.http1_idle_time - (time.time() - self.last_recv_time), 0.2)
+                time_to_sleep = max(self.config.http1_idle_time - (time.time() - self.last_recv_time), 3)
                 time.sleep(time_to_sleep)
 
                 if not self.request_onway and time.time() - self.last_recv_time > self.config.http1_idle_time:
@@ -97,7 +97,11 @@ class Http1Worker(HttpWorker):
 
     def work_loop(self):
         while self.keep_running:
-            task = self.task_queue.get(True)
+            try:
+                task = self.task_queue.get(block=True)
+            except:
+                task = None
+
             if not task:
                 # None task means exit
                 self.accept_task = False
@@ -110,7 +114,6 @@ class Http1Worker(HttpWorker):
                     self.close("keep alive")
                     return
 
-                self.last_recv_time = time.time()
                 continue
 
             # self.logger.debug("http1 get task")
@@ -124,10 +127,10 @@ class Http1Worker(HttpWorker):
             self.request_task(task)
             self.request_onway = False
             self.last_send_time = time_now
-            self.last_recv_time = time_now
 
-            if self.processed_tasks > self.config.http1_max_process_tasks:
-                self.close("lift end.")
+            life_end_reason = self.is_life_end()
+            if life_end_reason:
+                self.close("life_end:" + life_end_reason)
                 return
 
     def request_task(self, task):
@@ -140,7 +143,8 @@ class Http1Worker(HttpWorker):
 
         task.headers[b'Host'] = self.get_host(task.host)
 
-        task.headers[b"Content-Length"] = len(task.body)
+        request_len = len(task.body)
+        task.headers[b"Content-Length"] = request_len
         request_data = b'%s %s HTTP/1.1\r\n' % (task.method, task.path)
         request_data += pack_headers(task.headers)
         request_data += b'\r\n'
@@ -151,24 +155,34 @@ class Http1Worker(HttpWorker):
             start = 0
             while start < payload_len:
                 send_size = min(payload_len - start, 65535)
-                sended = self.ssl_sock.send(task.body[start:start+send_size])
+                sended = self.ssl_sock.send(task.body[start:start + send_size])
                 start += sended
 
-            task.set_state("h1_req_sended")
+            task.set_state("h1_req_sent")
+        except Exception as e:
+            self.logger.warn("%s %s h1_request send:%r inactive_time:%d task.timeout:%d",
+                             self.ip_str, self.ssl_sock.getsockname(),
+                             e, time.time() - self.last_recv_time, task.timeout)
+            self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
 
+            self.retry_task_cb(task)
+            self.task = None
+            self.close("send fail")
+            return
+
+        try:
             response = simple_http_client.Response(self.ssl_sock)
-
             response.begin(timeout=timeout)
             task.set_state("response_begin")
-
+            self.last_recv_time = time.time()
         except Exception as e:
-            self.logger.warn("%s h1_request:%r inactive_time:%d task.timeout:%d",
+            self.logger.warn("%s h1_request recv:%r inactive_time:%d task.timeout:%d",
                              self.ip_str, e, time.time() - self.last_recv_time, task.timeout)
             self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
 
             self.retry_task_cb(task)
             self.task = None
-            self.close("down fail")
+            self.close("recv fail")
             return
 
         task.set_state("h1_get_head")
@@ -183,7 +197,11 @@ class Http1Worker(HttpWorker):
         response.worker = self
         task.content_length = response.content_length
         task.responsed = True
-        task.queue.put(response)
+        if task.queue:
+            task.queue.put(response)
+        else:
+            if self.config.http2_show_debug:
+                self.logger.debug("got res for %s status:%d", self.ip_str, response.status)
 
         try:
             read_target = int(response.content_length)
@@ -200,7 +218,7 @@ class Http1Worker(HttpWorker):
                 self.logger.warn("read fail, ip:%s, chunk:%d url:%s task.timeout:%d e:%r",
                                  self.ip_str, response.chunked, task.url, task.timeout, e)
                 self.logger.warn('%s trace:%s', self.ip_str, self.get_trace())
-                self.close("down fail")
+                self.close("read fail")
                 return
 
             task.put_data(data)
@@ -218,9 +236,19 @@ class Http1Worker(HttpWorker):
         task.finish()
 
         self.ssl_sock.received_size += data_len
-        time_cost = (time.time() - start_time)
-        if time_cost != 0:
-            speed = data_len / time_cost
+
+        time_now = time.time()
+        time_cost = (time_now - start_time)
+        xcost = float(response.headers.get(b"X-Cost", 0))
+        if isinstance(xcost, list):
+            xcost = float(xcost[0])
+
+        total_len = (request_len + data_len)
+        road_time = time_cost - xcost
+        if xcost and total_len > 10000 and road_time:
+            speed = total_len / road_time
+            self.update_speed(speed)
+
             task.set_state("h1_finish[SP:%d]" % speed)
 
         self.transfered_size += len(request_data) + data_len
@@ -260,8 +288,9 @@ class Http1Worker(HttpWorker):
 
             content = response.readall(timeout=5)
             self.record_active("head end")
-            self.rtt = (time.time() - start_time) * 1000
-            #self.ip_manager.update_ip(self.ip, self.rtt)
+            rtt = (time.time() - start_time) * 1000
+            self.update_rtt(rtt)
+            self.last_recv_time = time.time()
             return True
         except Exception as e:
             self.logger.warn("h1 %s HEAD keep alive request fail:%r", self.ssl_sock.ip_str, e)
@@ -274,8 +303,6 @@ class Http1Worker(HttpWorker):
         # Notify loop to exit
         # This function may be call by out side http2
         # When gae_proxy found the appid or ip is wrong
-        self.accept_task = False
-        self.keep_running = False
         self.task_queue.put(None)
 
         if self.task is not None:

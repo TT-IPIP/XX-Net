@@ -283,8 +283,8 @@ class DNSLogger:
                     e))
 
     def log_data(self,dnsobj):
-        print("\n",dnsobj.toZone("    "),"\n",sep="")
-
+        # print("\n",dnsobj.toZone("    "),"\n",sep="")
+        pass
 
 class UDPServer(socketserver.UDPServer):
     allow_reuse_address = True
@@ -335,7 +335,7 @@ class DNSServer(object):
         self.server.serve_forever()
 
     def start_thread(self):
-        self.thread = threading.Thread(target=self.server.serve_forever)
+        self.thread = threading.Thread(target=self.server.serve_forever, name="dns_server")
         self.thread.daemon = True
         self.thread.start()
 

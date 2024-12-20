@@ -10,7 +10,8 @@ allowing small reads from the network. This represents a potentially massive
 performance optimisation at the cost of burning some memory in the userspace
 process.
 """
-import select
+import selectors2 as selectors
+import socket
 from .exceptions import ConnectionResetError, LineTooLongError
 # import logging
 # logger = logging.getLogger()
@@ -87,6 +88,8 @@ class BufferedSocket(object):
         """
         # The wrapped socket.
         self._sck = sck
+        self.select2 = selectors.DefaultSelector()
+        self.select2.register(sck, selectors.EVENT_READ)
 
         # The buffer we're using.
         self._backing_buffer = bytearray(buffer_size)
@@ -100,6 +103,9 @@ class BufferedSocket(object):
 
         # The number of bytes in the buffer.
         self._bytes_in_buffer = 0
+
+        # record all bytes received from beginning
+        self.bytes_received = 0
 
         # following is define for send buffer
         # all send will be cache and send when flush called,
@@ -147,9 +153,10 @@ class BufferedSocket(object):
         if self._bytes_in_buffer:
             return True
 
-        read = select.select([self._sck], [], [], 0)[0]
-        if read:
-            return True
+        events = self.select2.select(timeout=0)
+        for key, event in events:
+            if event & selectors.EVENT_READ:
+                return True
 
         return False
 
@@ -213,18 +220,37 @@ class BufferedSocket(object):
         # attempt will block. If it will, don't bother reading. If we need the
         # data, always do the read.
         if self._bytes_in_buffer >= amt:
-            should_read = select.select([self._sck], [], [], 0)[0]
+            should_read = False
+            events = self.select2.select(timeout=0)
+            for key, event in events:
+                if event & selectors.EVENT_READ:
+                    should_read = True
         else:
             should_read = True
 
         if ((self._remaining_capacity > self._bytes_in_buffer) and (should_read)):
-            count = self._sck.recv_into(self._buffer_view[self._buffer_end:])
+            while True:
+                count = 0
+                try:
+                    count = self._sck.recv_into(self._buffer_view[self._buffer_end:])
+                    break
+                except socket.error as e:
+                    if e.errno in [2, 11, 35, 10035]:
+                        if self._bytes_in_buffer >= amt:
+                            # It is not necessary to read, just continue
+                            break
+                        else:
+                            self.select2.select(timeout=10)
+                            continue
+                    else:
+                        raise e
 
             # The socket just got closed. We should throw an exception if we
             # were asked for more data than we can return.
             if not count and amt > self._bytes_in_buffer:
                 raise ConnectionResetError()
             self._bytes_in_buffer += count
+            self.bytes_received += count
 
         # Read out the bytes and update the index.
         amt = min(amt, self._bytes_in_buffer)

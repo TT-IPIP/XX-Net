@@ -18,7 +18,7 @@ path_to_script () {
 
 goto_script_path() {
   PATH_TO_SCRIPT="$(path_to_script "$0")"
-  # XX-Net fails to start if the install path contains spaces, so it must be quoted.
+  # Fails to start if the install path contains spaces, so it must be quoted.
   cd "$PATH_TO_SCRIPT"
 }
 
@@ -43,7 +43,7 @@ if [ ! -f "code/$VERSION/launcher/start.py" ]; then
     VERSION="default"
 fi
 REAL_VERSION=`cat code/$VERSION/version.txt`
-echo "XX-Net version:$REAL_VERSION"
+echo "Start version:$REAL_VERSION"
 
 
 # launch xx-net service by ignore hungup signal
@@ -78,43 +78,52 @@ openwrt_setup_env()
 # get operating system name
 os_name=`uname -s`
 if [ $os_name = 'Linux' ]; then
-    if ! ${PYTHON} -c 'import OpenSSL' 2> /dev/null; then
-        echo 'Installing pyOpenSSL for your system... Please type in your password if requested'
+
+  PYTHON3="python3/bin/python3"
+  if test -f "$PYTHON3"; then
+    echo "Linux using embedded python."
+    PYTHON="$PYTHON3"
+  else
+    if ! ${PYTHON} --version 2> /dev/null; then
+        echo 'Installing python3 for your system... Please type in your password if requested'
         if has_command zypper; then
             # openSUSE
-            sudo zypper in -y python3-pyOpenSSL
+            sudo zypper in -y python3
         elif has_command apt-get; then
             # Debian or Debian-like
-            sudo apt-get install -y python3-openssl
+            sudo apt-get install -y python3
         elif has_command dnf; then
             # Fedora
-            sudo dnf install -y python3-pyOpenSSL
+            sudo dnf install -y python3
         elif has_command yum; then
             # RedHat
-            sudo yum install -y pyOpenSSL
+            sudo yum install -y python3
         elif has_command pacman; then
             # ArchLinux
-            sudo pacman -S --noconfirm python-pyopenssl
+            sudo pacman -S --noconfirm python3
         elif has_command opkg; then
             # OpenWrt
             echo "install python"
-            opkg install python3 python3-pyopenssl
+            opkg install python3 python3
         fi
-        pip install pyopenssl
     fi
+  fi
 elif [ $os_name = 'Darwin' ]; then
 
-  PYTHON310="python3.10.1/bin/python3.10"
-  if test -f "$PYTHON310"; then
+  PYTHON3="python3/bin/python3"
+  if test -f "$PYTHON3"; then
     echo "Darwin using embedded python."
-    PYTHON="$PYTHON310"
+    PYTHON="$PYTHON3"
   else
-    if ! ${PYTHON} -c 'import OpenSSL' 2> /dev/null; then
-      sudo pip3 install pyOpenSSL
-    fi
     if ! ${PYTHON} -c 'import PyObjCTools, AppKit, SystemConfiguration' 2> /dev/null; then
       sudo pip3 install -U PyObjC Pillow
     fi
+  fi
+
+  if [ ! -d "data/launcher/installed" ]; then
+    # remove the mask for download file warning
+    xattr -c -r *
+    touch "data/launcher/installed"
   fi
 fi
 
@@ -133,6 +142,12 @@ start
 
  -no_mess_system
    Don't mess the system, include not install CA to browser, not add shortcut to desktop automatically.
+
+ -no_popup
+   Don't popup Browser window when start.
+
+ -no_systray
+   Don't show systray in task bar.
 
  -f
    Run in foreground, in Mac will run in background as default.
@@ -185,6 +200,15 @@ unset_iptables(){
     fi
 
     iptables -t nat -D PREROUTING --in-interface $INF -p tcp -j REDSOCKS
+    iptables -t nat -D REDSOCKS -d 0.0.0.0/8 -j RETURN
+    iptables -t nat -D REDSOCKS -d 10.0.0.0/8 -j RETURN
+    iptables -t nat -D REDSOCKS -d 127.0.0.0/8 -j RETURN
+    iptables -t nat -D REDSOCKS -d 169.254.0.0/16 -j RETURN
+    iptables -t nat -D REDSOCKS -d 172.16.0.0/12 -j RETURN
+    iptables -t nat -D REDSOCKS -d 192.168.0.0/16 -j RETURN
+    iptables -t nat -D REDSOCKS -d 224.0.0.0/4 -j RETURN
+    iptables -t nat -D REDSOCKS -d 240.0.0.0/4 -j RETURN
+    iptables -t nat -D REDSOCKS -p tcp -j REDIRECT --to-ports 8086
     iptables -t nat -X REDSOCKS
 }
 
@@ -208,14 +232,18 @@ case $1 in
 
 -no_mess_system)shift 1;;
 
+-no_popup)shift 1;;
+
+-no_systray)shift 1;;
+
 -f)HANGUP='0'; shift 1;;
 -hungup)HANGUP='1';shift 1;;
 
-set_iptables) set_iptables $2;;
+set_iptables) set_iptables $2;shift 1;;
 
-unset_iptables) unset_iptables $2;;
+unset_iptables) unset_iptables $2;exit 1;;
 
-*) echo "unknown option $1."; shift 1;;
+*) echo "unknown option $1."; exit 1;;
 esac
 done
 

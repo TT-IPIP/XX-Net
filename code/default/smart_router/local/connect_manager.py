@@ -6,6 +6,8 @@ import time
 import threading
 import struct
 
+import utils
+
 if __name__ == '__main__':
     current_path = os.path.dirname(os.path.abspath(__file__))
     root_path = os.path.abspath(os.path.join(current_path, os.pardir))
@@ -15,7 +17,7 @@ if __name__ == '__main__':
 
 
 from .socket_wrap import SocketWrap
-import simple_queue
+from queue import Queue
 import socks
 from . import global_var as g
 from xlog import getLogger
@@ -51,12 +53,12 @@ class ConnectManager(object):
         self.connect_threads = connect_threads
 
         self.running = True
-        threading.Thread(target=self.check_thread).start()
+        threading.Thread(target=self.connection_check_worker, name="smart_router_conn_checker").start()
 
     def stop(self):
         self.running = False
 
-    def check_thread(self):
+    def connection_check_worker(self):
         while self.running:
             time_now = time.time()
             with self.lock:
@@ -70,7 +72,7 @@ class ConnectManager(object):
                     except:
                         pass
 
-            time.sleep(1)
+            time.sleep(10)
 
     def add_sock(self, host_port, sock):
         with self.lock:
@@ -96,6 +98,7 @@ class ConnectManager(object):
                         break
 
     def create_connect(self, queue, host, ip, port, timeout=5):
+        ip = utils.to_bytes(ip)
         if int(g.config.PROXY_ENABLE):
             sock = socks.socksocket(socket.AF_INET if b':' not in ip else socket.AF_INET6)
         else:
@@ -104,7 +107,9 @@ class ConnectManager(object):
         # set struct linger{l_onoff=1,l_linger=0} to avoid 10048 socket error
         sock.setsockopt(socket.SOL_SOCKET, socket.SO_LINGER, struct.pack('ii', 1, 0))
         # resize socket recv buffer 8K->32K to improve browser releated application performance
-        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 32 * 1024)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 512 * 1024)
+        sock.setsockopt(socket.SOL_SOCKET, socket.SO_SNDBUF, 512 * 1024)
+
         sock.setsockopt(socket.SOL_TCP, socket.TCP_NODELAY, True)
         sock.settimeout(timeout)
 
@@ -145,16 +150,17 @@ class ConnectManager(object):
         ip_time = sorted(list(ip_rate.items()), key=operator.itemgetter(1))
         ordered_ips = [ip for ip, rate in ip_time]
 
-        wait_queue = simple_queue.Queue()
+        wait_queue = Queue()
         wait_t = 0.2
         for ip in ordered_ips:
-            threading.Thread(target=self.create_connect, args=(wait_queue, host, ip, port)).start()
-            status = wait_queue.get(wait_t)
-            if status:
+            threading.Thread(target=self.create_connect, args=(wait_queue, host, ip, port),
+                             name="smart_router_create_conn_%s" % ip).start()
+            try:
+                status = wait_queue.get(timeout=wait_t)
                 sock = self.get_sock_from_cache(host_port)
                 if sock:
                     return sock
-            else:
+            except:
                 time.sleep(wait_t)
                 wait_t += 0.1
 
@@ -163,8 +169,10 @@ class ConnectManager(object):
             if time_left <= 0:
                 return self.get_sock_from_cache(host_port)
 
-            status = wait_queue.get(time_left)
-            if status:
+            try:
+                status = wait_queue.get(timeout=time_left)
                 sock = self.get_sock_from_cache(host_port)
                 if sock:
                     return sock
+            except:
+                pass

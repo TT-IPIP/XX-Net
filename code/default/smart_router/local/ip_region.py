@@ -5,23 +5,29 @@ import os
 import struct
 import sys
 import socket
-
+try:
+    from urllib.request import urlopen
+except ImportError:
+    from urllib2 import urlopen
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 launcher_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, "launcher"))
 
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
 top_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir))
-data_path = os.path.join(top_path, 'data', "smart_router")
 
 if __name__ == '__main__':
     python_path = root_path
     noarch_lib = os.path.abspath(os.path.join(python_path, 'lib', 'noarch'))
     sys.path.append(noarch_lib)
 
+
+import env_info
 import utils
 from xlog import getLogger
 xlog = getLogger("smart_router")
+
+data_path = os.path.join(env_info.data_path, "smart_router")
 
 
 class IpRegion(object):
@@ -53,7 +59,7 @@ class IpRegion(object):
         # 每 4 字节为一个索引范围 fip：BE short -> int，对应 IP 范围序数
         self.index = struct.unpack('>' + 'h' * (224 * 2), index)
         # 每 8 字节对应一段直连 IP 范围和一段非直连 IP 范围
-        self.data = struct.unpack('4s' * (data_len // 4), data)
+        self.raw_data = data
 
     def check_ip(self, ip):
         ip = utils.to_str(ip)
@@ -74,10 +80,11 @@ class IpRegion(object):
             return False
         hi = index[fip + 1]
         #与 IP 范围比较确定 IP 位置
-        data = self.data
         while lo < hi:
             mid = (lo + hi) // 2
-            if data[mid] > nip:
+            mid_dat_raw = self.raw_data[mid * 4: mid*4 + 4]
+            mid_dat = struct.unpack('4s', mid_dat_raw)[0]
+            if mid_dat > nip:
                 hi = mid
             else:
                 lo = mid + 1
@@ -85,6 +92,7 @@ class IpRegion(object):
         return lo & 1
 
     def check_ips(self, ips):
+        # return True if any ip in China
         ips = utils.to_str(ips)
         for ip in ips:
             try:
@@ -111,7 +119,7 @@ class IpRegion(object):
                      '198.51.100.0/24',  # TEST-NET-2
                      '203.0.113.0/24',  # TEST-NET-3
                      # 连续地址直到 IP 结束，特殊处理
-                     # '224.0.0.0/4',  #组播地址（D类）
+                     '224.0.0.0/4',  #组播地址（D类）
                      # '240.0.0.0/4',  #保留地址（E类）
                      )
         keeplist = []
@@ -161,8 +169,16 @@ class IpRegion(object):
         iplist = []
         fdi = open(self.cn_ipv4_range,"r")
         for line in fdi.readlines():
-            lp = line.split()
-            iplist.append((utils.ip_string_to_num(lp[0]), mask_dict[lp[1]]))
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+
+            if "/" in line:
+                lp = line.split("/")
+                iplist.append((utils.ip_string_to_num(lp[0]), int(lp[1])))
+            else:
+                lp = line.split()
+                iplist.append((utils.ip_string_to_num(lp[0]), mask_dict[lp[1]]))
 
         iplist.extend(keeplist)
         # 排序，不然无法处理
@@ -221,7 +237,7 @@ class IpRegion(object):
         fd.write(b', range count: %d' % count)
         fd.close()
 
-        xlog.debug('include IP range number：%s' % count)
+        xlog.debug('include IP range number: %s' % count)
         xlog.debug('save to file:%s' % self.cn_ipdb)
 
 
@@ -236,15 +252,12 @@ class UpdateIpRange(object):
 
     def download_apnic(self, fn):
         import subprocess
-        import sys
-        import urllib.request, urllib.error, urllib.parse
         url = 'https://ftp.apnic.net/apnic/stats/apnic/delegated-apnic-latest'
         try:
             data = subprocess.check_output(['wget', url, '-O-'])
         except (OSError, AttributeError):
-            print("Fetching data from apnic.net, "
-                                 "it might take a few minutes, please wait...", file=sys.stderr)
-            data = urllib.request.urlopen(url).read()
+            xlog.info("Fetching data from apnic.net, it might take a few minutes, please wait...")
+            data = urlopen(url).read()
 
         with open(fn, "bw") as f:
             f.write(data)
@@ -267,5 +280,5 @@ class UpdateIpRange(object):
 if __name__ == '__main__':
     up = UpdateIpRange()
     ipr = IpRegion()
-    print((ipr.check_ip("8.8.8.8")))
-    print((ipr.check_ip("114.111.114.114")))
+    xlog.info("8.8.8.8: %s", ipr.check_ip("8.8.8.8"))
+    xlog.info("114.114.114.114: %s", ipr.check_ip("114.111.114.114"))

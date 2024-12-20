@@ -1,12 +1,18 @@
 #!/usr/bin/env python
 # coding:utf-8
 
-import urllib.parse
+
+try:
+    from urllib.parse import urlparse, parse_qs
+except ImportError:
+    from urlparse import urlparse, parse_qs
+
 import os
-import cgi
 import time
 import hashlib
 import threading
+import json
+import base64
 
 import utils
 from xlog import getLogger
@@ -18,8 +24,31 @@ from . import proxy_session
 from .tls_relay_front import web_control as tls_relay_web
 
 current_path = os.path.dirname(os.path.abspath(__file__))
-root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
+default_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
+root_path = os.path.abspath(os.path.join(default_path, os.pardir, os.pardir))
 web_ui_path = os.path.join(current_path, os.path.pardir, "web_ui")
+
+import env_info
+data_path = os.path.join(env_info.data_path, 'smart_router')
+
+
+def check_email(email):
+    import re
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        return False
+    else:
+        return True
+
+
+def get_lang():
+    app_info_file = os.path.join(env_info.data_path, "launcher", "config.json")
+    try:
+        with open(app_info_file, "r") as fd:
+            dat = json.load(fd)
+        return dat.get("language", "en")
+    except Exception as e:
+        xlog.exception("get version fail:%r", e)
+    return "en"
 
 
 class ControlHandler(simple_http_server.HttpServerHandler):
@@ -32,12 +61,12 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.wfile = wfile
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        path = urlparse(self.path).path
         if path == "/log":
             return self.req_log_handler()
         elif path == "/debug":
             data = g.session.status()
-            return self.send_response('text/html', data)
+            return self.send_response('text/plain', data)
         elif path == "/info":
             return self.req_info_handler()
         elif path == "/config":
@@ -65,10 +94,10 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                              self.command, path,
                              self.rfile, self.wfile)
             controler.do_GET()
-        elif path.startswith("/heroku_front/"):
-            path = self.path[13:]
-            from .heroku_front import web_control as heroku_web
-            controler = heroku_web.ControlHandler(self.client_address,
+        elif path.startswith("/seley_front/"):
+            path = self.path[12:]
+            from .seley_front import web_control as seley_web
+            controler = seley_web.ControlHandler(self.client_address,
                              self.headers,
                              self.command, path,
                              self.rfile, self.wfile)
@@ -86,8 +115,10 @@ class ControlHandler(simple_http_server.HttpServerHandler):
     def do_POST(self):
         xlog.debug('x-tunnel web_control %s %s %s ', self.address_string(), self.command, self.path)
 
-        path = urllib.parse.urlparse(self.path).path
-        if path == '/login':
+        path = urlparse(self.path).path
+        if path == '/token_login':
+            return self.req_token_login_handler()
+        elif path == '/login':
             return self.req_login_handler()
         elif path == "/logout":
             return self.req_logout_handler()
@@ -99,6 +130,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.req_order_handler()
         elif path == "/transfer":
             return self.req_transfer_handler()
+        elif path == "/reset_password":
+            return self.req_reset_password()
         elif path.startswith("/cloudflare_front/"):
             path = path[17:]
             from .cloudflare_front import web_control as cloudflare_web
@@ -115,11 +148,11 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                                                       self.command, path,
                                                       self.rfile, self.wfile)
             controler.do_POST()
-        elif path.startswith("/heroku_front/"):
+        elif path.startswith("/seley_front/"):
             path = path[13:]
 
-            from .heroku_front import web_control as heroku_web
-            controler = heroku_web.ControlHandler(self.client_address,
+            from .seley_front import web_control as seley_web
+            controler = seley_web.ControlHandler(self.client_address,
                                                       self.headers,
                                                       self.command, path,
                                                       self.rfile, self.wfile)
@@ -136,20 +169,20 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             return self.send_not_found()
 
     def req_log_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = self.unpack_reqs(parse_qs(req, keep_blank_values=True))
         data = ''
 
         if reqs["cmd"]:
-            cmd = reqs["cmd"][0]
+            cmd = reqs["cmd"]
         else:
             cmd = "get_last"
 
         if cmd == "get_last":
-            max_line = int(reqs["max_line"][0])
+            max_line = int(reqs["max_line"])
             data = xlog.get_last_lines(max_line)
         elif cmd == "get_new":
-            last_no = int(reqs["last_no"][0])
+            last_no = int(reqs["last_no"])
             data = xlog.get_new_lines(last_no)
         else:
             xlog.error('xtunnel log cmd:%s', cmd)
@@ -168,8 +201,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 "res": "login_process"
             })
 
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
 
         force = False
         if 'force' in reqs:
@@ -182,7 +215,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             xlog.debug("x_tunnel force update info")
             g.last_refresh_time = time_now
 
-            threading.Thread(target=proxy_session.request_balance, args=(None,None,False,False)).start()
+            threading.Thread(target=proxy_session.request_balance, args=(None,None,False,False),
+                             name="info__request_balance").start()
 
             return self.response_json({
                 "res": "login_process"
@@ -203,29 +237,83 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 "paypal_button_id": g.paypal_button_id,
                 "plans": g.plans,
                 "balance": "%f" % (g.balance),
+                "openai_balance": float(g.openai_balance),
                 "quota": "%d" % (g.quota),
                 "quota_list": g.quota_list,
-                "traffic": g.session.traffic,
+                "traffic": g.session.traffic_upload + g.session.traffic_download,
                 "last_fail": g.last_api_error
             }
         self.response_json(res_arr)
 
-    def req_login_handler(self):
-        def check_email(email):
-            import re
-            if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
-                return False
-            else:
-                return True
-
-        username    = str(self.postvars['username'][0])
-        #username = utils.get_printable(username)
-        password    = str(self.postvars['password'][0])
-        promoter = self.postvars.get("promoter", [""])[0]
-        is_register = int(self.postvars['is_register'][0])
+    def req_token_login_handler(self):
+        login_token = str(self.postvars['login_token'])
+        try:
+            login_str = base64.b64decode(login_token)
+            data = json.loads(utils.to_str(login_str))
+            username = data["login_account"]
+            password_hash = data["login_password"]
+            cloudflare_domains = data.get("cloudflare_domains")
+            tls_relay = data["tls_relay"]
+            seleys = data.get("seleys", {})
+        except Exception as e:
+            xlog.warn("token_login except:%r", e)
+            return self.response_json({
+                "res": "fail",
+                "reason": "token invalid"
+            })
 
         pa = check_email(username)
         if not pa:
+            xlog.warn("login with invalid email: %s", username)
+            return self.response_json({
+                "res": "fail",
+                "reason": "Invalid email."
+            })
+        elif len(password_hash) < 64:
+            return self.response_json({
+                "res": "fail",
+                "reason": "Password format fail"
+            })
+
+        g.config.api_server = g.config.default_config["api_server"]
+        if g.config.update_cloudflare_domains and cloudflare_domains:
+            g.http_client.save_cloudflare_domain(cloudflare_domains)
+        if g.tls_relay_front and tls_relay.get("ips"):
+            g.tls_relay_front.set_ips(tls_relay["ips"])
+        if g.seley_front:
+            g.seley_front.set_hosts(seleys.get("hosts", {}))
+
+        res, reason = proxy_session.request_balance(username, password_hash, False,
+                                                    update_server=True, promoter="")
+        if res:
+            g.config.login_account  = username
+            g.config.login_password = password_hash
+            g.config.save()
+            res_arr = {
+                "res": "success",
+                "balance": float(g.balance),
+                "openai_balance": float(g.openai_balance)
+            }
+            g.last_refresh_time = time.time()
+            g.session.start()
+        else:
+            res_arr = {
+                "res": "fail",
+                "reason": reason
+            }
+
+        return self.response_json(res_arr)
+
+    def req_login_handler(self):
+        username    = str(self.postvars['username'])
+        #username = utils.get_printable(username)
+        password    = str(self.postvars['password'])
+        promoter = self.postvars.get("promoter", [""])
+        is_register = int(self.postvars['is_register'])
+
+        pa = check_email(username)
+        if not pa:
+            xlog.warn("login with invalid email: %s", username)
             return self.response_json({
                 "res": "fail",
                 "reason": "Invalid email."
@@ -257,7 +345,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             g.config.save()
             res_arr = {
                 "res": "success",
-                "balance": float(g.balance)
+                "balance": float(g.balance),
+                "openai_balance": float(g.openai_balance)
             }
             g.last_refresh_time = time.time()
             g.session.start()
@@ -269,18 +358,72 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
         return self.response_json(res_arr)
 
+    def req_reset_password(self):
+        app_name = proxy_session.get_app_name()
+        account = self.postvars.get('username', [""])
+        stage = self.postvars.get('stage', [""])
+        code = self.postvars.get('code', [""])
+        xlog.info("reset password, stage:%s", stage)
+
+        if stage == "request_reset_password":
+            res, info = proxy_session.call_api("/request_reset_password", {
+                "account": account,
+                "app_id": app_name,
+                "lang": get_lang(),
+            })
+            if not res:
+                xlog.warn("request reset password fail:%s", info)
+                threading.Thread(target=proxy_session.update_quota_loop).start()
+                return self.response_json({"res": "fail", "reason": info})
+
+            self.response_json(info)
+
+        elif stage == "reset_password_check":
+            res, info = proxy_session.call_api("/reset_password_check", {
+                "account": account,
+                "code": code,
+                "app_id": app_name,
+                "lang": get_lang(),
+            })
+            if not res:
+                xlog.warn("reset password check fail:%s", info)
+                threading.Thread(target=proxy_session.update_quota_loop).start()
+                return self.response_json({"res": "fail", "reason": info})
+
+            self.response_json(info)
+
+        elif stage == "change_password":
+            password = self.postvars.get('password', [""])
+            password_hash = str(hashlib.sha256(utils.to_bytes(password)).hexdigest())
+            res, info = proxy_session.call_api("/change_password", {
+                "account": account,
+                "code": code,
+                "password": password_hash,
+                "app_id": app_name,
+                "lang": get_lang(),
+            })
+            if not res:
+                xlog.warn("change password fail:%s", info)
+                threading.Thread(target=proxy_session.update_quota_loop).start()
+                return self.response_json({"res": "fail", "reason": info})
+
+            self.response_json(info)
+        else:
+            self.response_json({"res": "fail", "reason": "wrong stage"})
+
     def req_logout_handler(self):
         g.config.login_account = ""
         g.config.login_password = ""
         g.config.save()
 
-        g.session.stop()
+        if g.session:
+            g.session.stop()
 
         return self.response_json({"res": "success"})
 
     def req_config_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
 
         def is_server_available(server):
             if g.selectable and server == '':
@@ -304,24 +447,12 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             }
         elif reqs['cmd'] == ['set']:
             if 'server' in self.postvars:
-                server = str(self.postvars['server'][0])
+                server = str(self.postvars['server'])
                 server = '' if server == 'auto' else server
-
-                promoter = self.postvars.get("promoter", [""])[0]
-                if promoter != g.promoter:
-                    res, info = proxy_session.call_api("/set_config", {
-                        "account": g.config.login_account,
-                        "password": g.config.login_password,
-                        "promoter": promoter
-                    })
-                    if not res:
-                        xlog.warn("set_config fail:%s", info)
-                        return self.response_json({"res": "fail", "reason": info})
-                    else:
-                        g.promoter = promoter
 
                 if is_server_available(server):
                     if server != g.config.server_host:
+                        xlog.info("change server to %s", server)
                         g.server_host = g.config.server_host = server
                         g.server_port = g.config.server_port = 443
                         g.config.save()
@@ -340,7 +471,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         return self.response_json(res)
 
     def req_order_handler(self):
-        product = self.postvars['product'][0]
+        product = self.postvars['product']
         if product != 'x_tunnel':
             xlog.warn("x_tunnel order product %s not support", product)
             return self.response_json({
@@ -348,7 +479,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 "reason": "product %s not support" % product
             })
 
-        plan = self.postvars['plan'][0]
+        plan = self.postvars['plan']
         if plan not in g.plans:
             xlog.warn("x_tunnel order plan %s not support", plan)
             return self.response_json({
@@ -370,9 +501,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.response_json({"res": "success"})
 
     def req_transfer_handler(self):
-        to_account = self.postvars['to_account'][0]
-        amount = float(self.postvars['amount'][0])
-        transfer_type = self.postvars['transfer_type'][0]
+        to_account = self.postvars['to_account']
+        amount = float(self.postvars['amount'])
+        transfer_type = self.postvars['transfer_type']
         if transfer_type == 'balance':
             if amount > g.balance:
                 reason = "balance not enough"
@@ -380,7 +511,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 return self.response_json({"res": "fail", "reason": reason})
             end_time = 0
         elif transfer_type == "quota":
-            end_time = int(self.postvars['end_time'][0])
+            end_time = int(self.postvars['end_time'])
         else:
             reason = "transfer type not support:%s" % transfer_type
             xlog.warn("transfer fail:%s", reason)
@@ -406,8 +537,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.response_json({"res": "success"})
 
     def req_get_history_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
 
         req_info = {
             "account": g.config.login_account,
@@ -435,5 +566,4 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.response_json({
             "res": "success",
             "status": res
-
         })

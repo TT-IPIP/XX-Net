@@ -1,65 +1,55 @@
 import os
+current_path = os.path.dirname(os.path.abspath(__file__))
+root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir, os.pardir))
 
 import xlog
-logger = xlog.getLogger("tls_relay")
-logger.set_buffer(500)
+import env_info
 
 from .config import Config
 from . import host_manager
 from . import connect_creator
+from . import ip_manager
 from front_base.openssl_wrap import SSLContext
-from front_base.ip_manager import IpManager
 from front_base.http_dispatcher import HttpsDispatcher
 from front_base.connect_manager import ConnectManager
-from front_base.ip_source import IpSimpleSource
-from front_base.check_ip import CheckIp
 from gae_proxy.local import check_local_network
+from . import http2_stream
 
 current_path = os.path.dirname(os.path.abspath(__file__))
-root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
+data_path = env_info.data_path
 module_data_path = os.path.join(data_path, 'x_tunnel')
-tls_certs_path = os.path.join(module_data_path, "tls_certs")
+
+logger = xlog.getLogger("tls_relay", log_path=module_data_path, save_start_log=1500, save_warning_log=True)
+logger.set_buffer(100)
 
 
 class Front(object):
     name = "tls_relay_front"
 
     def __init__(self):
-        self.running = True
-
+        self.running = False
         self.logger = logger
         config_path = os.path.join(module_data_path, "tls_relay.json")
         self.config = Config(config_path)
 
-        self.ca_cert_fn = os.path.join(module_data_path, "tls_relay_CA.crt")
+    def start(self):
+        self.running = True
+
         self.openssl_context = SSLContext(logger)
-        if os.path.isfile(self.ca_cert_fn):
-            self.openssl_context.set_ca(self.ca_cert_fn)
 
         if not os.path.isdir(module_data_path):
             os.mkdir(module_data_path)
 
-        if not os.path.isdir(tls_certs_path):
-            os.mkdir(tls_certs_path)
-
-        host_fn = os.path.join(module_data_path, "tls_host.json")
+        host_fn = os.path.join(module_data_path, "relay_host.json")
         self.host_manager = host_manager.HostManager(host_fn)
 
         self.connect_creator = connect_creator.ConnectCreator(logger, self.config, self.openssl_context, self.host_manager)
-        self.check_ip = CheckIp(xlog.null, self.config, self.connect_creator)
 
-        ip_source = IpSimpleSource(self.config.ip_source_ips)
-
-        default_ip_list_fn = ""
-        ip_list_fn = os.path.join(module_data_path, "tls_relay_ip_list.txt")
-        self.ip_manager = IpManager(logger, self.config, ip_source, check_local_network, self.check_ip.check_ip,
-                 default_ip_list_fn, ip_list_fn, scan_ip_log=None)
-        for ip in self.config.ip_source_ips:
-            self.ip_manager.add_ip(ip, 100)
-
+        ip_speed_fn = os.path.join(module_data_path, "relay_speed.json")
+        self.ip_manager = ip_manager.IpManager(self.config, self.host_manager, logger, ip_speed_fn)
         self.connect_manager = ConnectManager(logger, self.config, self.connect_creator, self.ip_manager, check_local_network)
-        self.http_dispatcher = HttpsDispatcher(logger, self.config, self.ip_manager, self.connect_manager)
+        self.http_dispatcher = HttpsDispatcher(logger, self.config, self.ip_manager, self.connect_manager,
+                                               http2stream_class=http2_stream.Stream)
 
         self.account = ""
         self.password = ""
@@ -70,50 +60,42 @@ class Front(object):
     def set_x_tunnel_account(self, account, password):
         self.account = account
         self.password = password
+        self.http_dispatcher.account = account
 
     def set_ips(self, ips):
-        if not ips:
+        if not self.config.allow_set_ips:
             return
 
         host_info = {}
-        ca_certs = []
-        ipss = []
         for ip_str in ips:
             dat = ips[ip_str]
-            ca_cert = dat["ca_crt"]
             sni = dat["sni"]
+            url_path = dat["url_path"]
+            port = dat.get("port", 443)
 
             host_info[ip_str] = {
                 "sni":sni,
-                "ca_crt":ca_cert,
-                "client_ca": dat["client_ca"],
-                "client_ca_fn": str(os.path.join(tls_certs_path, ip_str + ".ca")),
-                "client_key": dat["client_key"],
-                "client_key_fn": str(os.path.join(tls_certs_path, ip_str + ".key"))
+                "url_path": url_path,
+                "port": port,
             }
-            if ca_cert not in ca_certs:
-                ca_certs.append(ca_cert)
-            ipss.append(ip_str)
 
-            with open(host_info[ip_str]["client_ca_fn"], "w") as ca_fd:
-                ca_fd.write(dat["client_ca"])
+            ipv6 = dat["ipv6"]
+            if ipv6:
+                host_info[ipv6] = {
+                    "sni": sni,
+                    "url_path": url_path,
+                    "port": port,
+                }
 
-            with open(host_info[ip_str]["client_key_fn"], "w") as key_fd:
-                key_fd.write(dat["client_key"])
-
-        self.ip_manager.update_ips(ipss)
-        self.ip_manager.save(True)
         self.host_manager.set_host(host_info)
+        self.logger.debug("set_ips:%s", ips)
 
-        ca_content = "\n\n".join(ca_certs)
-        with open(self.ca_cert_fn, "w") as fd:
-            fd.write(ca_content)
-        self.openssl_context.set_ca(self.ca_cert_fn)
-        self.logger.info("set_ips:%s", ",".join(ipss))
+        self.http_dispatcher.start_connect_all_ips()
 
     def request(self, method, host, path="/", headers={}, data="", timeout=120):
         headers = dict(headers)
         headers["XX-Account"] = self.account
+        headers["X-Path"] = path
 
         response = self.http_dispatcher.request(method, host, path, dict(headers), data, timeout=timeout)
         if not response:
@@ -124,7 +106,7 @@ class Front(object):
 
         content = response.task.read_all()
         if status == 200:
-            logger.debug("%s %s%s status:%d trace:%s", method, host, path, status,
+            logger.debug("%s %s%s send:%d recv:%d trace:%s", method, host, path, len(data), len(content),
                        response.task.get_trace())
         else:
             logger.warn("%s %s%s status:%d trace:%s", method, host, path, status,
@@ -136,7 +118,6 @@ class Front(object):
         self.connect_manager.set_ssl_created_cb(None)
         self.http_dispatcher.stop()
         self.connect_manager.stop()
-        self.ip_manager.stop()
 
         self.running = False
 

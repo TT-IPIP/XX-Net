@@ -1,19 +1,16 @@
 import os
 
 from front_base.config import ConfigBase
-import simple_http_client
-import utils
 
+import utils
+import env_info
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
-module_data_path = os.path.join(data_path, 'gae_proxy')
+
+module_data_path = os.path.join(env_info.data_path, 'gae_proxy')
 
 
 headers = {"connection": "close"}
-fqrouter = simple_http_client.request("GET", "http://127.0.0.1:2515/ping", headers=headers, timeout=0.5)
-mobile = fqrouter and "PONG" in fqrouter.text
-del headers, fqrouter
 
 
 class Config(ConfigBase):
@@ -31,15 +28,15 @@ class Config(ConfigBase):
         # auto range
         self.set_var("AUTORANGE_THREADS", 10)
         self.set_var("AUTORANGE_MAXSIZE", 512 * 1024)
-        if mobile:
-            self.set_var("AUTORANGE_MAXBUFFERSIZE", 10 * 1024 * 1024 / 8)
-        else:
-            self.set_var("AUTORANGE_MAXBUFFERSIZE", 20 * 1024 * 1024)
+        # if mobile:
+        #     self.set_var("AUTORANGE_MAXBUFFERSIZE", 10 * 1024 * 1024 / 8)
+        # else:
+        self.set_var("AUTORANGE_MAXBUFFERSIZE", 20 * 1024 * 1024)
         self.set_var("JS_MAXSIZE", 0)
 
         # gae
         self.set_var("GAE_PASSWORD", "")
-        self.set_var("GAE_VALIDATE", 0)
+        self.set_var("GAE_VALIDATE", 1)
 
         # host rules
         self.set_var("hosts_direct", [
@@ -136,7 +133,7 @@ class Config(ConfigBase):
 
         # check_ip
         self.set_var("check_ip_host", "xxnet-1.appspot.com")
-        self.set_var("check_ip_accept_status", [200, 503])
+        self.set_var("check_ip_accept_status", [200, 500, 503])
         self.set_var("check_ip_content", b"GoAgent")
 
         # host_manager

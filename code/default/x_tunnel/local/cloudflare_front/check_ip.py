@@ -8,7 +8,8 @@ import json
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath( os.path.join(current_path, os.pardir, os.pardir, os.pardir))
 local_path = os.path.abspath( os.path.join(current_path, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
+import env_info
+data_path = env_info.data_path
 module_data_path = os.path.join(data_path, 'x_tunnel')
 python_path = root_path
 
@@ -46,6 +47,7 @@ from front_base.host_manager import HostManagerBase
 
 from cloudflare_front.config import Config
 from cloudflare_front import front
+from cloudflare_front.host_manager import HostManager
 
 
 def check_all_domain(check_ip):
@@ -67,7 +69,7 @@ class CheckAllIp(object):
         self.host = host
         self.lock = threading.Lock()
 
-        self.in_fd = open("good_ip.txt", "r")
+        self.in_fd = open(os.path.join(current_path, "good_ip.txt"), "r")
         self.out_fd = open(
             os.path.join(module_data_path, "cloudflare_checked_ip.txt"),
             "w"
@@ -81,20 +83,22 @@ class CheckAllIp(object):
                     raise Exception()
 
                 try:
-                    ip = line.split()[0]
-                    return ip
+                    ip_infos = line.split()
+                    ip = ip_infos[0]
+                    handshake_time = ip_infos[3]
+                    return ip, handshake_time
                 except:
                     continue
 
     def write_ip(self, ip, host, handshake):
         with self.lock:
-            self.out_fd.write("%s %s gws %d 0 0\n" % (ip, host, handshake))
+            self.out_fd.write("%s %s gws %s 0 0\n" % (ip, host, handshake))
             self.out_fd.flush()
 
     def checker(self):
         while True:
             try:
-                ip = self.get_ip()
+                ip, handshake_time = self.get_ip()
             except Exception as e:
                 xlog.info("no ip left")
                 return
@@ -109,7 +113,7 @@ class CheckAllIp(object):
                 xlog.debug("check fail:%s fail", ip)
                 continue
 
-            self.write_ip(ip, res.domain, res.handshake_time)
+            self.write_ip(ip, res.domain, handshake_time)
 
     def run(self):
         for i in range(0, 10):
@@ -117,11 +121,18 @@ class CheckAllIp(object):
 
 
 def check_all_ip(check_ip):
-    check = CheckAllIp(check_ip, "scan1.movistar.gq")
+
+    HostManager(config, logger, default_domain_fn, domain_fn, front)
+    check = CheckAllIp(check_ip, "scan1.half.autos")
     check.run()
 
 
 if __name__ == "__main__":
+
+    config_path = os.path.join(module_data_path, "cloudflare_front.json")
+    config = Config(config_path)
+    default_domain_fn = os.path.join(current_path, "front_domains.json")
+    domain_fn = os.path.join(module_data_path, "cloudflare_domains.json")
     # format: [ip] [domain [sni] ]
 
     # case 1: only ip
@@ -130,8 +141,9 @@ if __name__ == "__main__":
     # case 4: domain
     # case 5: domain sni
 
-    ip = "141.101.120.131"
-    host = "v3.freena.cf"
+    # ip = "141.101.120.131"
+    ip = "2a06:98c1:3120::1"
+    host = "v3.half.autos"
     sni = host
 
     args = list(sys.argv[1:])
@@ -154,9 +166,6 @@ if __name__ == "__main__":
 
     wait_time = 0
 
-    config_path = os.path.join(module_data_path, "cloudflare_front.json")
-    config = Config(config_path)
-
     ca_certs = os.path.join(current_path, "cacert.pem")
     openssl_context = SSLContext(logger, ca_certs=ca_certs)
     host_manager = HostManagerBase()
@@ -176,4 +185,3 @@ if __name__ == "__main__":
 
     front.stop()
     sys.exit(0)
-    exit(0)

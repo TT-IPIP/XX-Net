@@ -3,7 +3,6 @@
 
 
 import platform
-import urllib.parse
 import json
 import os
 import re
@@ -15,13 +14,17 @@ import time
 import hashlib
 import ssl
 
+try:
+    from urllib.parse import urlparse, parse_qs
+except ImportError:
+    from urlparse import urlparse, parse_qs
+    
 import simple_http_server
 import simple_http_client
 import env_info
 import utils
 
-import front_base.openssl_wrap as openssl_wrap
-
+import env_info
 from xlog import getLogger
 xlog = getLogger("gae_proxy")
 from .config import config, direct_config
@@ -35,7 +38,7 @@ current_path = os.path.dirname(os.path.abspath(__file__))
 
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir))
 top_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir))
-data_path = os.path.abspath( os.path.join(top_path, 'data', 'gae_proxy'))
+data_path = os.path.join(env_info.data_path, 'gae_proxy')
 web_ui_path = os.path.join(current_path, os.path.pardir, "web_ui")
 
 
@@ -119,7 +122,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.wfile.write(b'HTTP/1.1 403\r\nConnection: close\r\n\r\n')
 
     def do_GET(self):
-        path = urllib.parse.urlparse(self.path).path
+        path = urlparse(self.path).path
         if path == "/log":
             return self.req_log_handler()
         elif path == "/status":
@@ -210,7 +213,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
     def do_POST(self):
         try:
             refer = self.headers.getheader('Referer')
-            netloc = urllib.parse.urlparse(refer).netloc
+            netloc = urlparse(refer).netloc
             if not netloc.startswith("127.0.0.1") and not netloc.startswitch("localhost"):
                 xlog.warn("web control ref:%s refuse", netloc)
                 return
@@ -219,7 +222,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
         xlog.debug ('GAEProxy web_control %s %s %s ', self.address_string(), self.command, self.path)
 
-        path = urllib.parse.urlparse(self.path).path
+        path = urlparse(self.path).path
         if path == '/deploy':
             return self.req_deploy_handler()
         elif path == "/config":
@@ -233,19 +236,20 @@ class ControlHandler(simple_http_server.HttpServerHandler):
             xlog.info('%s "%s %s HTTP/1.1" 404 -', self.address_string(), self.command, self.path)
 
     def req_log_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
+        reqs = self.unpack_reqs(reqs)
         data = ''
 
         cmd = "get_last"
         if reqs["cmd"]:
-            cmd = reqs["cmd"][0]
+            cmd = reqs["cmd"]
 
         if cmd == "get_last":
-            max_line = int(reqs["max_line"][0])
+            max_line = int(reqs["max_line"])
             data = xlog.get_last_lines(max_line)
         elif cmd == "get_new":
-            last_no = int(reqs["last_no"][0])
+            last_no = int(reqs["last_no"])
             data = xlog.get_new_lines(last_no)
         else:
             xlog.error('WebUI log from:%s unknown cmd:%s path:%s ', self.address_string(), self.command, self.path)
@@ -347,8 +351,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc('text/html', data)
 
     def req_config_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
         data = ''
 
         appid_updated = False
@@ -365,7 +369,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 }
                 data = json.dumps(ret_config, default=lambda o: o.__dict__)
             elif reqs['cmd'] == ['set_config']:
-                appids = self.postvars['appid'][0]
+                appids = self.postvars['appid']
                 if appids != "|".join(config.GAE_APPIDS):
                     if appids and (front.ip_manager.good_ipv4_num + front.ip_manager.good_ipv6_num):
                         fail_appid_list = test_appids(appids)
@@ -395,7 +399,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 data = '{"res":"success"}'
                 #http_request("http://127.0.0.1:8085/init_module?module=gae_proxy&cmd=restart")
             elif reqs['cmd'] == ['set_config_level']:
-                setting_level = self.postvars['setting_level'][0]
+                setting_level = self.postvars['setting_level']
                 if setting_level:
                     xlog.info("set globa config level to %s", setting_level)
                     config.set_level(setting_level)
@@ -405,7 +409,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                     front.ip_manager.remove_slowest_ip()
                     front.ip_manager.search_more_ip()
 
-                connect_receive_buffer = int(self.postvars['connect_receive_buffer'][0])
+                connect_receive_buffer = int(self.postvars['connect_receive_buffer'])
                 if 8192 <= connect_receive_buffer <= 2097152 and connect_receive_buffer != config.connect_receive_buffer:
                     xlog.info("set connect receive buffer to %dKB", connect_receive_buffer // 1024)
                     config.connect_receive_buffer = connect_receive_buffer
@@ -427,16 +431,16 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
     def req_deploy_handler(self):
         global deploy_proc
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
         data = ''
 
         log_path = os.path.abspath(os.path.join(current_path, os.pardir, "server", 'upload.log'))
         time_now = datetime.datetime.today().strftime('%H:%M:%S-%a/%d/%b/%Y')
 
         if reqs['cmd'] == ['deploy']:
-            appid = self.postvars['appid'][0]
-            debug = int(self.postvars['debug'][0])
+            appid = self.postvars['appid']
+            debug = int(self.postvars['debug'])
 
             if deploy_proc and deploy_proc.poll() == None:
                 xlog.warn("deploy is running, request denied.")
@@ -486,13 +490,13 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc('text/html', data)
 
     def req_importip_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
         data = ''
 
         if reqs['cmd'] == ['importip']:
             count = 0
-            ip_list = self.postvars['ipList'][0]
+            ip_list = self.postvars['ipList']
             lines = ip_list.split("\n")
             for line in lines:
                 addresses = line.split('|')
@@ -517,10 +521,11 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc('text/html', data)
 
     def req_test_ip_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
+        reqs = self.unpack_reqs(reqs)
 
-        ip = reqs['ip'][0]
+        ip = reqs['ip']
         result = front.check_ip.check_ip(ip)
         if not result or not result.ok:
             data = "{'res':'fail'}"
@@ -591,14 +596,16 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc(mimetype, data)
 
     def req_scan_ip_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
+        reqs = self.unpack_reqs(reqs)
+
         data = ""
-        if reqs['cmd'] == ['get_range']:
+        if reqs['cmd'] == 'get_range':
             data = front.ipv4_source.load_range_content()
-        elif reqs['cmd'] == ['update']:
+        elif reqs['cmd'] == 'update':
             #update ip_range if needed
-            content = self.postvars['ip_range'][0]
+            content = self.postvars['ip_range']
 
             #check ip_range checksums, update if needed
             default_digest = hashlib.md5(utils.to_bytes(front.ipv4_source.load_range_content(default=True))).hexdigest()
@@ -616,10 +623,10 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 front.ipv4_source.load_ip_range()
 
             #update auto_adjust_scan_ip and scan_ip_thread_num
-            should_auto_adjust_scan_ip = int(self.postvars['auto_adjust_scan_ip_thread_num'][0])
-            thread_num_for_scan_ip = int(self.postvars['scan_ip_thread_num'][0])
+            should_auto_adjust_scan_ip = int(self.postvars['auto_adjust_scan_ip_thread_num'])
+            thread_num_for_scan_ip = int(self.postvars['scan_ip_thread_num'])
 
-            use_ipv6 = self.postvars['use_ipv6'][0]
+            use_ipv6 = self.postvars['use_ipv6']
             if config.use_ipv6 != use_ipv6:
                 xlog.debug("use_ipv6 change to %s", use_ipv6)
                 config.use_ipv6 = use_ipv6
@@ -657,6 +664,10 @@ class ControlHandler(simple_http_server.HttpServerHandler):
 
     def req_download_cert_handler(self):
         filename = cert_util.CertUtil.ca_keyfile
+        if not os.path.isfile(filename):
+            xlog.warn("CA file not exist, download cert failed.")
+            return self.send_not_found()
+
         with open(filename, 'rb') as fp:
             data = fp.read()
         mimetype = 'application/x-x509-ca-cert'
@@ -671,8 +682,8 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc(mimetype, data)
 
     def req_check_ip_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
         data = ""
         if reqs['cmd'] == ['get_process']:
             all_ip_num = len(front.ip_manager.ip_dict)
@@ -710,8 +721,9 @@ class ControlHandler(simple_http_server.HttpServerHandler):
         self.send_response_nc(mimetype, data)
 
     def req_ipv6_tunnel_handler(self):
-        req = urllib.parse.urlparse(self.path).query
-        reqs = urllib.parse.parse_qs(req, keep_blank_values=True)
+        req = urlparse(self.path).query
+        reqs = parse_qs(req, keep_blank_values=True)
+        reqs = self.unpack_reqs(reqs)
         data = ''
 
         log_path = os.path.join(data_path, "ipv6_tunnel.log")
@@ -726,7 +738,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                            ['test_teredo_usability'],
                            ['test_teredo_server'],
                            ['set_best_server']]:
-            cmd = reqs['cmd'][0]
+            cmd = reqs['cmd']
             xlog.info("ipv6_tunnel switch %s", cmd)
 
             # Don't remove log file at here.
@@ -745,6 +757,7 @@ class ControlHandler(simple_http_server.HttpServerHandler):
                 result = ipv6_tunnel.set_best_server(is_local)
             else:
                 xlog.warn("unknown cmd:%s", cmd)
+                result = None
 
             xlog.info("ipv6_tunnel switch %s, result: %s", cmd, result)
 

@@ -15,18 +15,18 @@ from .connect_creator import ConnectCreator
 from .config import Config
 from . import host_manager
 from gae_proxy.local import check_local_network
-
+import env_info
 
 current_path = os.path.dirname(os.path.abspath(__file__))
 root_path = os.path.abspath(os.path.join(current_path, os.pardir, os.pardir, os.pardir))
-data_path = os.path.abspath(os.path.join(root_path, os.pardir, os.pardir, 'data'))
+data_path = env_info.data_path
 module_data_path = os.path.join(data_path, 'x_tunnel')
 
 
 class Front(object):
     name = "cloudfront_front"
 
-    def __init__(self):
+    def start(self):
         self.running = True
         self.last_host = "www.xx-net.org"
 
@@ -48,7 +48,7 @@ class Front(object):
             os.path.join(module_data_path, "cloudfront_ip_range.txt")
         )
         self.ip_manager = IpManager(
-            logger, self.config, ip_source, check_local_network,
+            logger, self.config, ip_source, self.host_manager, check_local_network,
             self.check_ip,
             os.path.join(current_path, "good_ip.txt"),
             os.path.join(module_data_path, "cloudfront_ip_list.txt"),
